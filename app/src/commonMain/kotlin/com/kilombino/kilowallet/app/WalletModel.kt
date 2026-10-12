@@ -451,7 +451,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         pinIfFirst(s.endpoint, ev.fingerprint)
                         _state.update { it.copy(rows = ev.rows, txs = ev.txs, height = ev.height, refreshing = false, scan = ScanPhase.Done, lastSyncedAt = platform.nowMillis()) }
                     }
-                    is ScanEvent.Failed -> _state.update { it.copy(refreshing = false, message = ev.message) }
+                    is ScanEvent.Failed -> _state.update { it.copy(refreshing = false, scan = ScanPhase.Error(ev.message), message = ev.message) }
                     is ScanEvent.CertificateChanged -> _state.update {
                         it.copy(refreshing = false, scan = ScanPhase.Error(ev.message), certChanged = ev.fingerprint)
                     }

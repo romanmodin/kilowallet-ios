@@ -539,6 +539,7 @@ class WalletModelTest {
         p.now += 60000
         model.refresh(); advanceUntilIdle()
         assertEquals(p.now - 60000, model.state.value.lastSyncedAt)
+        assertIs<ScanPhase.Error>(model.state.value.scan)
         model.setServer("offline.invalid", 50002); advanceUntilIdle()
         assertNull(model.state.value.lastSyncedAt)
     }
