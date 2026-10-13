@@ -1,6 +1,8 @@
 name: Verify saved screenshots
 
 on:
+  pull_request:
+    paths: [".github/workflows/screenshot-check.yml", "scripts/check-screen.swift"]
   workflow_dispatch:
     inputs:
       run_id:
@@ -23,7 +25,7 @@ jobs:
           name: screenshots
           path: screenshots
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.run_id }}
+          run-id: ${{ inputs.run_id || '38358722071' }}
       - name: Diagnose the disposable note fixture only
         run: |
           cat > /tmp/note-ocr.swift <<'SWIFT'
