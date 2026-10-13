@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.kilombino.kilowallet.app.coinId
 import com.kilombino.kilowallet.app.AppPlatform
 import com.kilombino.kilowallet.app.SendPhase
 import com.kilombino.kilowallet.app.UiState
@@ -33,6 +34,10 @@ import kotlin.math.roundToLong
 
 @Composable
 fun SendScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
+    if (platform.demoScreen == "coins") {
+        ScreenColumn { CoinControls(model, state, initiallyExpanded = true) }
+        return
+    }
     when (val p = state.send) {
         SendPhase.Editing -> SendForm(model, state, platform)
         SendPhase.Preparing -> Busy(model, "Choosing coins and checking each one against its transaction…")
@@ -111,7 +116,7 @@ private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) 
             if (all) {
                 val max = model.maxSendable(rateValue)
                 Text(if (state.hideAmounts) "Everything: •••• sats" else "Everything: ${formatSats(max)} sats", style = MaterialTheme.typography.titleMedium, color = Purple)
-                Explain("All your coins minus the fee; no change output.")
+                Explain("All eligible selected coins minus the fee; frozen coins are excluded.")
             } else {
                 Field(amount, { amount = it.filter { c -> c.isDigit() } }, "sats", keyboard = KeyboardType.Number)
                 if (sats > 0) Explain("= ${formatBtc(sats)} ${Chain.COIN}")
@@ -120,9 +125,10 @@ private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) 
                 Checkbox(all, { all = it }, colors = CheckboxDefaults.colors(checkedColor = Purple, uncheckedColor = TextFaint))
                 Text("send everything (MAX)", style = MaterialTheme.typography.bodyMedium, color = TextSoft)
             }
-            val available = state.spendable?.sumOf { it.value }
-            Explain(if (available == null) "loading your coins…" else if (state.hideAmounts) "spendable: •••• sats" else "spendable: ${formatSats(available)} sats in ${state.spendable.size} coins")
+            val available = state.spendable?.let { model.availableCoins().sumOf { it.value } }
+            Explain(if (available == null) "loading your coins…" else if (state.hideAmounts) "spendable: •••• sats" else "spendable: ${formatSats(available)} sats in ${model.availableCoins().size} eligible coins")
         }
+        CoinControls(model, state)
         Panel {
             SectionLabel("Fee rate")
             Field(rate, { rate = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
@@ -130,7 +136,7 @@ private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) 
             Explain(state.suggestedRate?.let { "The server suggests ${fmtRate(it)} sat/vB for the next blocks." }
                 ?: "No estimate from the server; 1 sat/vB is the usual minimum.")
         }
-        PrimaryButton("Review", Modifier.fillMaxWidth(), enabled = addrOk && (all || sats > 0)) {
+        PrimaryButton("Review", Modifier.fillMaxWidth(), enabled = addrOk && (all || sats > 0) && state.coinPolicyError == null && model.availableCoins().isNotEmpty()) {
             model.prepareSend(to, sats, rateValue, all)
         }
     }
@@ -178,6 +184,7 @@ private fun Review(model: WalletModel, p: SendPhase.Review, platform: AppPlatfor
         if (showDetails) Panel {
             KeyValue("Fee rate", "${fmtRate(d.effectiveRate)} sat/vB")
             KeyValue("Coins spent", "${d.inputs.size}")
+            d.inputs.forEach { Explain("${it.txid}:${it.vout} · ${formatSats(it.value)} sats") }
             Explain("Address format alone cannot distinguish XBT BLAKE2b from Bitcoin SHA-256.")
             Explain("Signed with unified sighash (0x21) for the ${Chain.DISPLAY} chain only. " +
                 "This transaction cannot be replayed on the SHA-256 chain. It signals replace-by-fee.")
@@ -204,5 +211,40 @@ private fun Sent(model: WalletModel, txid: String) {
         }
         Explain("The server accepted it. It shows as pending until a block includes it.")
         PrimaryButton("Done", Modifier.fillMaxWidth()) { model.back() }
+    }
+}
+
+@Composable
+private fun CoinControls(model: WalletModel, state: UiState, initiallyExpanded: Boolean = false) {
+    var expanded by remember { mutableStateOf(initiallyExpanded) }
+    Panel {
+        LinkText(if (expanded) "− Coin control" else "+ Coin control") { expanded = !expanded }
+        state.coinPolicyError?.let { Explain(it, color = Bad) }
+        Explain("${state.frozenCoins.size} frozen · " + if (state.selectedCoins == null) "automatic selection" else "${state.selectedCoins.size} selected")
+        if (expanded) {
+            Explain("Freezing excludes a coin from every new payment, including MAX. It is local to this device and is not restored by recovery words.")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(state.selectedCoins != null, { model.setManualCoins(it) })
+                Text("Choose exact coins", color = TextMain)
+            }
+            if (state.selectedCoins != null) Explain("Every selected coin will be used. Combining coins can link them publicly.")
+            state.spendable?.forEach { coin ->
+                val id = coin.coinId()
+                val frozen = id in state.frozenCoins
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (state.selectedCoins != null) Checkbox(id in state.selectedCoins,
+                        { model.selectCoin(id, it) }, enabled = !frozen)
+                    Text(if (state.hideAmounts) "•••• sats" else "${formatSats(coin.value)} sats", color = if (frozen) Warn else TextMain)
+                }
+                Explain(id)
+                Explain(if (coin.height > 0) "Confirmed at block ${coin.height}" else "Unconfirmed")
+                LinkText(if (frozen) "Unfreeze" else "Freeze") { model.freezeCoin(id, !frozen) }
+            }
+            val unseen = state.frozenCoins - (state.spendable?.map { it.coinId() }?.toSet() ?: emptySet())
+            unseen.forEach { id ->
+                Explain("Frozen · not in the current coin list: $id")
+                LinkText("Unfreeze record") { model.freezeCoin(id, false) }
+            }
+        }
     }
 }

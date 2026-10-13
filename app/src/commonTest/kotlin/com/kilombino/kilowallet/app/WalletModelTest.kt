@@ -544,4 +544,56 @@ class WalletModelTest {
         assertNull(model.state.value.lastSyncedAt)
     }
 
+    @Test fun frozenReviewCannotPromptUnlockAndStorageChangesCannotSlipPastUnlock() = checkModel { model, p ->
+        model.setUpDemo("review"); advanceUntilIdle()
+        val zpub = model.state.value.zpub!!
+        val id = (model.state.value.send as SendPhase.Review).draft.inputs.single().coinId()
+        FrozenCoins(p.prefs).set(zpub, id, true)
+        model.confirmSend()
+        assertIs<SendPhase.Failed>(model.state.value.send)
+        assertEquals(0, p.loadCalls)
+        FrozenCoins(p.prefs).set(zpub, id, false)
+        model.setUpDemo("review"); advanceUntilIdle()
+        model.confirmSend()
+        assertEquals(1, p.loadCalls)
+        FrozenCoins(p.prefs).set(zpub, id, true)
+        p.unlock!!(encodeSecret(words, ""), null)
+        advanceUntilIdle()
+        assertIs<SendPhase.Failed>(model.state.value.send)
+        assertTrue(p.sent.isEmpty())
+        assertTrue(p.values.keys.none { it.startsWith("pending.") })
+    }
+
+    @Test fun selectionFreezingMaxAndBackgroundUseTheSamePolicy() = checkModel { model, p ->
+        model.setUpDemo("coins"); advanceUntilIdle()
+        val s = model.state.value
+        val first = s.spendable!!.first()
+        assertEquals(listOf(first), model.availableCoins())
+        val before = model.maxSendable(1.0)
+        assertTrue(before in 1 until first.value)
+        model.freezeCoin(first.coinId(), true)
+        assertEquals(emptySet(), model.state.value.selectedCoins)
+        assertEquals(0, model.maxSendable(1.0))
+        model.setManualCoins(false)
+        assertTrue(model.availableCoins().isEmpty())
+        model.freezeCoin(first.coinId(), false)
+        assertEquals(before, model.maxSendable(1.0))
+        model.onBackground()
+        assertNull(model.state.value.selectedCoins)
+        assertNull(model.state.value.spendable)
+        assertEquals(1, FrozenCoins(p.prefs).read(s.zpub!!).size)
+    }
+
+    @Test fun corruptFreezePolicyBlocksReviewWithoutOverwritingIt() = checkModel { model, p ->
+        model.setUpDemo("coins"); advanceUntilIdle()
+        val key = "frozen.v1." + WalletCatalog.idFor(model.state.value.zpub!!)
+        p.values[key] = "{broken"
+        assertEquals(0, model.maxSendable(1.0))
+        model.prepareSend("bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", 10000, 1.0, false)
+        advanceUntilIdle()
+        assertIs<SendPhase.Failed>(model.state.value.send)
+        assertEquals("{broken", p.values[key])
+        assertEquals(0, p.loadCalls)
+    }
+
 }

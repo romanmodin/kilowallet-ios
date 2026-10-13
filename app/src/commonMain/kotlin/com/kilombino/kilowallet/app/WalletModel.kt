@@ -87,6 +87,9 @@ data class UiState(
     val send: SendPhase = SendPhase.Editing,
     val suggestedRate: Double? = null,
     val spendable: List<SpendableUtxo>? = null,
+    val frozenCoins: Set<String> = emptySet(),
+    val selectedCoins: Set<String>? = null,
+    val coinPolicyError: String? = null,
     val message: String? = null,
 ) {
     val walletName: String get() = wallets.firstOrNull { it.id == walletId }?.name ?: "Wallet"
@@ -108,6 +111,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     private val prefs = platform.prefs
     private val addresses = AddressBook(prefs)
     private val transactionNotes = TransactionNotes(prefs)
+    private val frozenStore = FrozenCoins(prefs)
     private var exporting = false
     private var receiveSession: Pair<String, Int>? = null
     private val _state = MutableStateFlow(UiState())
@@ -136,7 +140,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         scanJob?.cancel()
         walletEpoch++
         _state.update { it.copy(screen = if (it.kind == null) Screen.Welcome else Screen.Home,
-            send = SendPhase.Editing, scan = ScanPhase.Idle, refreshing = false, message = null) }
+            send = SendPhase.Editing, selectedCoins = null, spendable = null, scan = ScanPhase.Idle, refreshing = false, message = null) }
     }
 
 
@@ -185,10 +189,49 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
 
     private fun loadNotes() {
         val zpub = state.value.zpub ?: return
+        loadFrozen(zpub)
         runCatching { transactionNotes.read(zpub) }
             .onSuccess { notes -> _state.update { it.copy(notes = notes) } }
             .onFailure { say("Could not read local notes. Existing notes were not changed.") }
     }
+
+    private fun loadFrozen(zpub: String) {
+        runCatching { frozenStore.read(zpub) }
+            .onSuccess { coins -> _state.update { it.copy(frozenCoins = coins, coinPolicyError = null) } }
+            .onFailure { _state.update { it.copy(coinPolicyError = "Frozen coin settings could not be read. Spending is blocked until they can be recovered.") } }
+    }
+
+    fun setManualCoins(manual: Boolean) {
+        if (state.value.send !is SendPhase.Editing) return
+        _state.update { it.copy(selectedCoins = if (manual) emptySet() else null) }
+    }
+
+    fun selectCoin(id: String, selected: Boolean) {
+        val s = state.value
+        if (s.send !is SendPhase.Editing || s.selectedCoins == null || id in s.frozenCoins ||
+            s.spendable?.none { it.coinId() == id } != false) return
+        _state.update { it.copy(selectedCoins = if (selected) s.selectedCoins + id else s.selectedCoins - id) }
+    }
+
+    fun freezeCoin(id: String, freeze: Boolean) {
+        val s = state.value
+        val zpub = s.zpub ?: return
+        if (s.send !is SendPhase.Editing || pending(zpub) != null ||
+            (s.spendable?.none { it.coinId() == id } != false && id !in s.frozenCoins)) return
+        runCatching { frozenStore.set(zpub, id, freeze) }
+            .onSuccess { next -> _state.update { it.copy(frozenCoins = next, selectedCoins = it.selectedCoins?.minus(id), coinPolicyError = null) } }
+            .onFailure { loadFrozen(zpub); say("Could not change the frozen coin setting. Existing settings were preserved.") }
+    }
+
+    private fun allowedCoins(s: UiState, coins: List<SpendableUtxo>): List<SpendableUtxo> {
+        // Read durable policy every time, including the final signing boundary.
+        val frozen = frozenStore.read(requireNotNull(s.zpub))
+        return eligibleCoins(coins, frozen, s.selectedCoins)
+    }
+
+    fun availableCoins(): List<SpendableUtxo> = runCatching {
+        allowedCoins(state.value, state.value.spendable ?: emptyList())
+    }.getOrDefault(emptyList())
 
     fun toggleHideAmounts() {
         val hide = !state.value.hideAmounts
@@ -259,7 +302,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             _state.update { it.copy(scan = ScanPhase.Idle, refreshing = false, certChanged = null) }
         }
         if (screen != Screen.Receive || state.value.screen != Screen.Receive) receiveSession = null
-        _state.update { it.copy(screen = screen, message = null) }
+        _state.update { it.copy(screen = screen, message = null, selectedCoins = if (screen == Screen.Send) it.selectedCoins else null) }
         if (screen == Screen.Send) openSend()
     }
 
@@ -354,7 +397,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         if (s.kind == WalletKind.HOT) platform.seeds.delete(id)?.let { say("Could not remove the wallet: $it"); return }
         runCatching {
             requireNotNull(catalog).remove(id)
-            val cleared = runCatching { s.zpub?.let(transactionNotes::clear) }
+            val cleared = runCatching { s.zpub?.let { transactionNotes.clear(it); frozenStore.clear(it) } }
             showCatalog()
             if (cleared.isFailure) say("Wallet removed, but its local notes could not be cleared.")
         }
@@ -487,7 +530,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 else NodeEndpoint(host.trim(), port, !(host.trim() == NodeEndpoint.DEFAULT.host && port == NodeEndpoint.DEFAULT.port))
         prefs.put(K_HOST, if (e.isCustom) e.host else null)
         prefs.put(K_PORT, if (e.isCustom) e.port.toString() else null)
-        _state.update { it.copy(endpoint = e, pinned = prefs.get(pinKey(e)), rows = emptyList(), txs = emptyList(), lastSyncedAt = null) }
+        _state.update { it.copy(endpoint = e, pinned = prefs.get(pinKey(e)), rows = emptyList(), txs = emptyList(), lastSyncedAt = null, spendable = null, selectedCoins = null, send = SendPhase.Editing) }
         if (_state.value.zpub != null) scan()
     }
 
@@ -521,7 +564,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         val s = _state.value
         s.zpub?.let { z -> pending(z)?.let { p -> _state.update { it.copy(send = p) }; return } }
         val epoch = actionEpoch
-        _state.update { it.copy(send = SendPhase.Editing, spendable = null) }
+        s.zpub?.let(::loadFrozen)
+        _state.update { it.copy(send = SendPhase.Editing, spendable = null, selectedCoins = null) }
         scope.launch {
             val rate = scanner.suggestedFeeRate(s.endpoint, s.pinned)
             if (isCurrent(epoch, s)) _state.update { it.copy(suggestedRate = rate) }
@@ -529,10 +573,11 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         scope.launch {
             runCatching { scanner.gatherUtxos(s.rows.filter { it.isUsed }, s.endpoint, s.pinned) }
                 .onSuccess { u -> if (isCurrent(epoch, s)) _state.update { it.copy(spendable = u) } }
+                .onFailure { if (isCurrent(epoch, s)) say("Could not load coins: ${it.message}") }
         }
     }
 
-    fun maxSendable(rate: Double): Long = runCatching { SendPlanner.maxSendable(rate, _state.value.spendable ?: emptyList()) }.getOrDefault(0)
+    fun maxSendable(rate: Double): Long = runCatching { SendPlanner.maxSendable(rate, allowedCoins(state.value, state.value.spendable ?: emptyList())) }.getOrDefault(0)
 
     /** Choose coins and the fee and show the review; nothing secret is touched yet. */
     fun prepareSend(to: String, amountSats: Long, rate: Double, sendAll: Boolean) {
@@ -544,11 +589,11 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         _state.update { it.copy(send = SendPhase.Preparing) }
         sendJob = scope.launch {
             runCatching {
-                val utxos = s.spendable ?: scanner.gatherUtxos(s.rows.filter { it.isUsed }, s.endpoint, s.pinned)
+                val utxos = allowedCoins(s, s.spendable ?: scanner.gatherUtxos(s.rows.filter { it.isUsed }, s.endpoint, s.pinned))
                 addresses.observe(zpub, s.rows)
                 val changeIndex = addresses.next(zpub, 1)
                 val draft = withContext(cryptoDispatcher) {
-                    SendPlanner.plan(to, amountSats, rate, utxos, SendPlanner.changeScript(zpub, changeIndex), sendAll)
+                    SendPlanner.plan(to, amountSats, rate, utxos, SendPlanner.changeScript(zpub, changeIndex), sendAll, useAllInputs = s.selectedCoins != null)
                 }
                 scanner.verifyCoins(zpub, draft.inputs, s.endpoint, s.pinned)
                 if (draft.change > 0) addresses.checkAvailable(zpub, 1, changeIndex)
@@ -565,6 +610,12 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         val draft = review.draft
         val zpub = s.zpub ?: return
         if (s.kind != WalletKind.HOT || pending(zpub) != null) return
+        try {
+            require(allowedCoins(s, draft.inputs).size == draft.inputs.size) { "A reviewed coin is frozen. Edit the payment." }
+        } catch (e: Exception) {
+            _state.update { it.copy(send = SendPhase.Failed(e.message ?: "Coin policy could not be checked.")) }
+            return
+        }
         cancelAction()
         val epoch = actionEpoch
         // Set busy BEFORE authentication: rapid taps cannot queue multiple unlocks or broadcasts.
@@ -578,6 +629,11 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             }
             sendJob = scope.launch {
                 try {
+                    // A storage change or corrupt policy must block signing, not unlock frozen coins.
+                    val approved = allowedCoins(s, draft.inputs)
+                    require(approved.size == draft.inputs.size) { "A reviewed coin is now frozen. Edit the payment." }
+                    coroutineContext.ensureActive()
+                    if (!isCurrent(epoch, s)) return@launch
                     val (words, pass) = decodeSecret(secret)
                     val signed = withContext(cryptoDispatcher) { Signer.sign(draft, words, pass, zpub) }
                     coroutineContext.ensureActive()
@@ -663,6 +719,13 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     "receive", "request" -> { go(Screen.Receive); platform.markReady(screen) }
                     "settings" -> { go(Screen.Settings); platform.markReady(screen) }
                     "send" -> { go(Screen.Send); platform.markReady(screen) }
+                    "coins" -> {
+                        val coins = listOf(SpendableUtxo("ab".repeat(32), 0, 250_000, 0, 0, 970000),
+                            SpendableUtxo("cd".repeat(32), 1, 100_000, 0, 1, 970001))
+                        val frozen = frozenStore.set(zpub, coins.last().coinId(), true)
+                        _state.update { it.copy(screen = Screen.Send, spendable = coins, frozenCoins = frozen, selectedCoins = setOf(coins.first().coinId())) }
+                        platform.markReady(screen)
+                    }
                     "review" -> {
                         // A made-up coin, only so the review screen has something to show.
                         val coin = SpendableUtxo("4f".repeat(32), 0, 250_000, 0, 0, 970_000)
