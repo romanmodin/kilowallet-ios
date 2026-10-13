@@ -1,0 +1,47 @@
+name: Verify saved screenshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'iOS run containing this repository’s screenshot artifact'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run_id }}
+      - name: Diagnose the disposable note fixture only
+        run: |
+          cat > /tmp/note-ocr.swift <<'SWIFT'
+          import Foundation
+          import Vision
+          let request = VNRecognizeTextRequest()
+          request.recognitionLevel = .accurate
+          request.recognitionLanguages = ["en-US"]
+          request.usesLanguageCorrection = true
+          try VNImageRequestHandler(url: URL(fileURLWithPath: "screenshots/13-note.png"), options: [:]).perform([request])
+          // This specific fixture contains only synthetic public transactions and a test note.
+          // Never run this diagnostic on recovery-word or user-provided images.
+          for result in request.results ?? [] {
+              print(result.topCandidates(3).map { $0.string })
+          }
+          SWIFT
+          swift /tmp/note-ocr.swift
+      - name: Verify the note using the repository checker
+        run: |
+          swiftc scripts/check-screen.swift -o /tmp/check-screen
+          /tmp/check-screen screenshots/13-note.png 'October test payout'
