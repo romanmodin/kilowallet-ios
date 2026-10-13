@@ -42,6 +42,7 @@ sealed interface Screen {
     data object Home : Screen
     data object Receive : Screen
     data object Send : Screen
+    data object BackupCheck : Screen
     data object Settings : Screen
     data class ShowWords(val words: List<String>) : Screen
 }
@@ -70,6 +71,11 @@ data class UiState(
     val newWalletName: String = "Wallet 1",
     val settingUp: Boolean = false,
     val hideAmounts: Boolean = false,
+    val amountUnit: AmountUnit = AmountUnit.SATS,
+    val recipients: List<Recipient> = emptyList(),
+    val recipientError: String? = null,
+    val backupCheckedAt: Long? = null,
+    val checkingBackup: Boolean = false,
     val notes: Map<String, TransactionNote> = emptyMap(),
     val lastSyncedAt: Long? = null,
     val kind: WalletKind? = null,
@@ -112,6 +118,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     private val addresses = AddressBook(prefs)
     private val transactionNotes = TransactionNotes(prefs)
     private val frozenStore = FrozenCoins(prefs)
+    private val recipientsStore = Recipients(prefs)
     private var exporting = false
     private var receiveSession: Pair<String, Int>? = null
     private val _state = MutableStateFlow(UiState())
@@ -140,7 +147,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         scanJob?.cancel()
         walletEpoch++
         _state.update { it.copy(screen = if (it.kind == null) Screen.Welcome else Screen.Home,
-            send = SendPhase.Editing, selectedCoins = null, spendable = null, scan = ScanPhase.Idle, refreshing = false, message = null) }
+            send = SendPhase.Editing, checkingBackup = false, selectedCoins = null, spendable = null, scan = ScanPhase.Idle, refreshing = false, message = null) }
     }
 
 
@@ -165,7 +172,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             _state.value = UiState(screen = if (active == null) Screen.Welcome else Screen.Home,
                 wallets = saved.value.wallets, walletId = active?.id, kind = active?.kind, zpub = active?.zpub,
                 endpoint = endpoint, pinned = prefs.get(pinKey(endpoint)),
-                newWalletName = WalletCatalog.nextName(saved.value.wallets), hideAmounts = prefs.get(K_HIDE) == "true")
+                newWalletName = WalletCatalog.nextName(saved.value.wallets), hideAmounts = prefs.get(K_HIDE) == "true", amountUnit = savedUnit())
             loadNotes()
             if (active != null) scan()
         } catch (e: Exception) {
@@ -182,7 +189,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         _state.value = UiState(screen = if (active == null) Screen.Welcome else Screen.Home,
             wallets = saved.wallets, walletId = active?.id, kind = active?.kind, zpub = active?.zpub,
             endpoint = previous.endpoint, pinned = prefs.get(pinKey(previous.endpoint)),
-            newWalletName = WalletCatalog.nextName(saved.wallets), hideAmounts = prefs.get(K_HIDE) == "true")
+            newWalletName = WalletCatalog.nextName(saved.wallets), hideAmounts = prefs.get(K_HIDE) == "true", amountUnit = savedUnit())
         loadNotes()
         if (scanSelected && active != null) scan()
     }
@@ -190,9 +197,80 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     private fun loadNotes() {
         val zpub = state.value.zpub ?: return
         loadFrozen(zpub)
+        runCatching { recipientsStore.read(zpub) }
+            .onSuccess { list -> _state.update { it.copy(recipients = list, recipientError = null) } }
+            .onFailure { _state.update { it.copy(recipientError = "Saved recipients could not be read. Existing data was preserved.") } }
+        _state.update { it.copy(backupCheckedAt = prefs.get(backupKey(zpub))?.toLongOrNull()) }
         runCatching { transactionNotes.read(zpub) }
             .onSuccess { notes -> _state.update { it.copy(notes = notes) } }
             .onFailure { say("Could not read local notes. Existing notes were not changed.") }
+    }
+
+    private fun savedUnit() = if (prefs.get("display.unit") == "XBT") AmountUnit.XBT else AmountUnit.SATS
+    fun setAmountUnit(unit: AmountUnit) {
+        if (state.value.send is SendPhase.Signing) return
+        runCatching { prefs.put("display.unit", unit.name) }
+            .onSuccess { _state.update { it.copy(amountUnit = unit) } }
+            .onFailure { say("Could not save the display unit.") }
+    }
+
+    fun saveRecipient(walletId: String, address: String, name: String): Boolean {
+        val s = state.value
+        if (s.walletId != walletId || s.send is SendPhase.Signing) return false
+        val zpub = s.zpub ?: return false
+        return runCatching {
+            val list = recipientsStore.save(zpub, address, name)
+            _state.update { it.copy(recipients = list, recipientError = null) }
+            true
+        }.getOrElse { say(it.message ?: "Could not save recipient."); false }
+    }
+
+    fun removeRecipient(walletId: String, address: String) {
+        val s = state.value
+        if (s.walletId != walletId || s.send is SendPhase.Signing) return
+        val zpub = s.zpub ?: return
+        runCatching { recipientsStore.remove(zpub, address) }
+            .onSuccess { list -> _state.update { it.copy(recipients = list) } }
+            .onFailure { say("Could not remove recipient. Existing data was preserved.") }
+    }
+
+    private fun backupKey(zpub: String) = "backup.checked." + WalletCatalog.idFor(zpub)
+    fun startBackupCheck() {
+        val s = state.value
+        if (s.kind != WalletKind.HOT || s.send is SendPhase.Signing) return
+        cancelAction()
+        val epoch = actionEpoch
+        platform.seeds.load(s.walletId ?: WalletCatalog.LEGACY_ID, "Check the written backup for ${s.walletName}") { secret, error ->
+            if (!isCurrent(epoch, s)) return@load
+            if (secret == null) { say(error ?: "Not unlocked."); return@load }
+            go(Screen.BackupCheck)
+        }
+    }
+
+    fun verifyBackup(words: List<String>, passphrase: String) {
+        val s = state.value
+        val zpub = s.zpub ?: return
+        if (s.screen != Screen.BackupCheck || s.kind != WalletKind.HOT || s.checkingBackup) return
+        val clean = words.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        if (!Bip39.isValid(clean)) { say("Check the word count, spelling and order."); return }
+        cancelAction()
+        val epoch = actionEpoch
+        _state.update { it.copy(checkingBackup = true) }
+        sendJob = scope.launch {
+            try {
+                val recovered = withContext(cryptoDispatcher) { Signer.accountZpub(clean, passphrase) }
+                if (!isCurrent(epoch, s)) return@launch
+                require(WalletCatalog.idFor(recovered) == WalletCatalog.idFor(zpub)) {
+                    "These words and passphrase do not match this wallet. Check your written backup."
+                }
+                val time = platform.nowMillis()
+                prefs.put(backupKey(zpub), time.toString())
+                _state.update { it.copy(screen = Screen.Settings, checkingBackup = false, backupCheckedAt = time,
+                    message = "Backup verified for ${s.walletName}. Keep your written backup secure.") }
+            } catch (e: CancellationException) { throw e }
+              catch (e: Exception) { if (isCurrent(epoch, s)) _state.update { it.copy(checkingBackup = false,
+                  message = e.message ?: "Could not verify backup.") } }
+        }
     }
 
     private fun loadFrozen(zpub: String) {
@@ -302,7 +380,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             _state.update { it.copy(scan = ScanPhase.Idle, refreshing = false, certChanged = null) }
         }
         if (screen != Screen.Receive || state.value.screen != Screen.Receive) receiveSession = null
-        _state.update { it.copy(screen = screen, message = null, selectedCoins = if (screen == Screen.Send) it.selectedCoins else null) }
+        _state.update { it.copy(screen = screen, message = null, checkingBackup = false, selectedCoins = if (screen == Screen.Send) it.selectedCoins else null) }
         if (screen == Screen.Send) openSend()
     }
 
@@ -397,9 +475,9 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         if (s.kind == WalletKind.HOT) platform.seeds.delete(id)?.let { say("Could not remove the wallet: $it"); return }
         runCatching {
             requireNotNull(catalog).remove(id)
-            val cleared = runCatching { s.zpub?.let { transactionNotes.clear(it); frozenStore.clear(it) } }
+            val cleared = runCatching { s.zpub?.let { transactionNotes.clear(it); frozenStore.clear(it); recipientsStore.clear(it); prefs.put(backupKey(it), null) } }
             showCatalog()
-            if (cleared.isFailure) say("Wallet removed, but its local notes could not be cleared.")
+            if (cleared.isFailure) say("Wallet removed, but some local annotations or settings could not be cleared.")
         }
             .onFailure { say("Could not finish removing the wallet: ${it.message ?: "storage error"}") }
     }
@@ -703,7 +781,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                             WalletInfo(WalletCatalog.idFor(watch), "Watch-only", WalletKind.WATCH, watch))) }
                         go(Screen.Wallets); platform.markReady(screen)
                     }
-                    "history", "private", "note", "export" -> {
+                    "history", "private", "note", "export", "filters", "units" -> {
                         val txid = "ab".repeat(32)
                         val note = TransactionNote("Mining payout", "October test payout")
                         val notes = transactionNotes.save(zpub, txid, note.label, note.note)
@@ -712,13 +790,19 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                             txs = listOf(TxConf(txid, 12, false, 250_000, height = 970_000),
                                 TxConf("cd".repeat(32), 0, true, -25_000)),
                             height = 970_011, scan = ScanPhase.Done, lastSyncedAt = platform.nowMillis(),
-                            notes = notes, hideAmounts = screen == "private") }
+                            notes = notes, hideAmounts = screen == "private", amountUnit = if (screen == "units") AmountUnit.XBT else AmountUnit.SATS) }
                         platform.markReady(screen)
                     }
                     "home" -> scan()
                     "receive", "request" -> { go(Screen.Receive); platform.markReady(screen) }
                     "settings" -> { go(Screen.Settings); platform.markReady(screen) }
                     "send" -> { go(Screen.Send); platform.markReady(screen) }
+                    "backup" -> { go(Screen.BackupCheck); platform.markReady(screen) }
+                    "recipients" -> {
+                        val list = recipientsStore.save(zpub, "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", "Mining account")
+                        _state.update { it.copy(recipients = list) }
+                        go(Screen.Settings); platform.markReady(screen)
+                    }
                     "coins" -> {
                         val coins = listOf(SpendableUtxo("ab".repeat(32), 0, 250_000, 0, 0, 970000),
                             SpendableUtxo("cd".repeat(32), 1, 100_000, 0, 1, 970001))

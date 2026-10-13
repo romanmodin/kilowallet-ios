@@ -29,7 +29,7 @@ xcrun simctl status_bar "$UDID" override --time 9:41 --batteryState charged --ba
 xcrun simctl install "$UDID" "$APP"
 
 n=0
-for screen in welcome create restore watch home receive send review settings wallets history private note request export coins; do
+for screen in welcome create restore watch home receive send review settings wallets history private note request export coins recipients backup filters units; do
   n=$((n + 1))
   if [ -n "$ONLY" ] && [ "$screen" != "$ONLY" ]; then continue; fi
   xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
@@ -48,6 +48,10 @@ for screen in welcome create restore watch home receive send review settings wal
   xcrun simctl io "$UDID" screenshot "$SHOT"
   expected=""
   case "$screen" in
+    recipients) expected="Saved recipients" ;;
+    backup) expected="Check written backup" ;;
+    filters) expected="Search and filters" ;;
+    units) expected="0.00250000" ;;
     coins) expected="Choose exact coins" ;;
     review) expected="Review payment" ;;
     wallets) expected="Wallets" ;;

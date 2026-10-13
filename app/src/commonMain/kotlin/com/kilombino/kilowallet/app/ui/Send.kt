@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.kilombino.kilowallet.app.AmountUnit
 import com.kilombino.kilowallet.app.coinId
 import com.kilombino.kilowallet.app.AppPlatform
 import com.kilombino.kilowallet.app.SendPhase
@@ -41,7 +42,7 @@ fun SendScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
     when (val p = state.send) {
         SendPhase.Editing -> SendForm(model, state, platform)
         SendPhase.Preparing -> Busy(model, "Choosing coins and checking each one against its transaction…")
-        is SendPhase.Review -> Review(model, p, platform, state.walletName)
+        is SendPhase.Review -> Review(model, p, platform, state.walletName, state.amountUnit)
         SendPhase.Signing -> Busy(model, "Signing (unified sighash) and broadcasting…", allowBack = false)
         is SendPhase.Sent -> Sent(model, p.txid)
         is SendPhase.Pending -> ScreenColumn {
@@ -82,9 +83,10 @@ private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) 
     var to by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     var rate by remember { mutableStateOf("") }
+    var recipients by remember { mutableStateOf(false) }
     var all by remember { mutableStateOf(false) }
     val rateValue = rate.replace(',', '.').toDoubleOrNull() ?: state.suggestedRate ?: 1.0
-    val sats = amount.filter { it.isDigit() }.toLongOrNull() ?: 0L
+    val sats = state.amountUnit.parse(amount) ?: 0L
     val addrOk = to.isNotBlank() && Address.isValid(to)
 
     fun takePayment(text: String) {
@@ -92,7 +94,7 @@ private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) 
         paymentError = null
         val (a, s) = parsed
         to = a
-        if (s != null) { amount = s.toString(); all = false }
+        if (s != null) { amount = state.amountUnit.input(s); all = false }
     }
 
     ScreenColumn {
@@ -103,6 +105,7 @@ private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) 
             SectionLabel("To")
             paymentError?.let { Text(it, color = Bad) }
             Field(to, { to = it.trim() }, "bc1… / 1… / 3… address", singleLine = false, minLines = 2)
+            LinkText("Saved recipients") { recipients = true }
             if (to.isNotBlank() && !addrOk) Text("Not a valid address.", style = MaterialTheme.typography.bodySmall, color = Bad)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SecondaryButton("Paste", Modifier.weight(1f), color = TextMain) { clipboard.getText()?.text?.let { takePayment(it) } }
@@ -115,18 +118,19 @@ private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) 
             SectionLabel("Amount")
             if (all) {
                 val max = model.maxSendable(rateValue)
-                Text(if (state.hideAmounts) "Everything: •••• sats" else "Everything: ${formatSats(max)} sats", style = MaterialTheme.typography.titleMedium, color = Purple)
+                Text(if (state.hideAmounts) "Everything: •••• ${state.amountUnit.label}" else "Everything: ${state.amountUnit.text(max)}", style = MaterialTheme.typography.titleMedium, color = Purple)
                 Explain("All eligible selected coins minus the fee; frozen coins are excluded.")
             } else {
-                Field(amount, { amount = it.filter { c -> c.isDigit() } }, "sats", keyboard = KeyboardType.Number)
-                if (sats > 0) Explain("= ${formatBtc(sats)} ${Chain.COIN}")
+                Field(amount, { amount = it.take(32) }, state.amountUnit.label, keyboard = KeyboardType.Decimal)
+                if (amount.isNotBlank() && sats == 0L) Explain("Enter a valid positive amount.", color = Bad)
+                if (sats > 0) Explain(if (state.amountUnit == AmountUnit.SATS) "= ${formatBtc(sats)} XBT" else "= ${formatSats(sats)} sats")
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(all, { all = it }, colors = CheckboxDefaults.colors(checkedColor = Purple, uncheckedColor = TextFaint))
                 Text("send everything (MAX)", style = MaterialTheme.typography.bodyMedium, color = TextSoft)
             }
             val available = state.spendable?.let { model.availableCoins().sumOf { it.value } }
-            Explain(if (available == null) "loading your coins…" else if (state.hideAmounts) "spendable: •••• sats" else "spendable: ${formatSats(available)} sats in ${model.availableCoins().size} eligible coins")
+            Explain(if (available == null) "loading your coins…" else if (state.hideAmounts) "spendable: •••• ${state.amountUnit.label}" else "spendable: ${state.amountUnit.text(available)} in ${model.availableCoins().size} eligible coins")
         }
         CoinControls(model, state)
         Panel {
@@ -140,6 +144,7 @@ private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) 
             model.prepareSend(to, sats, rateValue, all)
         }
     }
+    if (recipients) RecipientsDialog(model, state, initialAddress = to, onChoose = { to = it; paymentError = null }, onClose = { recipients = false })
 }
 
 private fun fmtRate(r: Double): String {
@@ -148,7 +153,7 @@ private fun fmtRate(r: Double): String {
 }
 
 @Composable
-private fun Review(model: WalletModel, p: SendPhase.Review, platform: AppPlatform, walletName: String) {
+private fun Review(model: WalletModel, p: SendPhase.Review, platform: AppPlatform, walletName: String, unit: AmountUnit) {
     val d = p.draft
     var ack by remember(d) { mutableStateOf(false) }
     var showDetails by remember(d) { mutableStateOf(false) }
@@ -156,17 +161,17 @@ private fun Review(model: WalletModel, p: SendPhase.Review, platform: AppPlatfor
         BackLink("← edit") { model.editSend() }
         Text("Review payment", style = MaterialTheme.typography.titleLarge, color = TextMain)
         Explain("From $walletName", color = TextSoft)
-        Text("${formatSats(d.amount)} sats", style = MaterialTheme.typography.headlineMedium, color = Purple)
+        Text(unit.text(d.amount), style = MaterialTheme.typography.headlineMedium, color = Purple)
         SectionLabel("XBT · BLAKE2b", color = TextSoft)
         Panel {
             SectionLabel("Recipient")
             Text(chunked(d.to), style = MaterialTheme.typography.titleMedium, color = TextMain)
         }
         Panel {
-            KeyValue("Amount", "${formatSats(d.amount)} sats")
-            KeyValue("Network fee", "${formatSats(d.fee)} sats")
-            KeyValue("Total", "${formatSats(d.totalSent)} sats", Purple)
-            KeyValue("Change back to you", if (d.change > 0) "${formatSats(d.change)} sats" else "none")
+            KeyValue("Amount", unit.text(d.amount))
+            KeyValue("Network fee", unit.text(d.fee))
+            KeyValue("Total", unit.text(d.totalSent), Purple)
+            KeyValue("Change back to you", if (d.change > 0) unit.text(d.change) else "none")
         }
         p.concern?.let { c ->
             Panel(accent = Warn) {
@@ -184,7 +189,7 @@ private fun Review(model: WalletModel, p: SendPhase.Review, platform: AppPlatfor
         if (showDetails) Panel {
             KeyValue("Fee rate", "${fmtRate(d.effectiveRate)} sat/vB")
             KeyValue("Coins spent", "${d.inputs.size}")
-            d.inputs.forEach { Explain("${it.txid}:${it.vout} · ${formatSats(it.value)} sats") }
+            d.inputs.forEach { Explain("${it.txid}:${it.vout} · ${unit.text(it.value)}") }
             Explain("Address format alone cannot distinguish XBT BLAKE2b from Bitcoin SHA-256.")
             Explain("Signed with unified sighash (0x21) for the ${Chain.DISPLAY} chain only. " +
                 "This transaction cannot be replayed on the SHA-256 chain. It signals replace-by-fee.")
@@ -234,7 +239,7 @@ private fun CoinControls(model: WalletModel, state: UiState, initiallyExpanded: 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (state.selectedCoins != null) Checkbox(id in state.selectedCoins,
                         { model.selectCoin(id, it) }, enabled = !frozen)
-                    Text(if (state.hideAmounts) "•••• sats" else "${formatSats(coin.value)} sats", color = if (frozen) Warn else TextMain)
+                    Text(if (state.hideAmounts) "•••• " + state.amountUnit.label else state.amountUnit.text(coin.value), color = if (frozen) Warn else TextMain)
                 }
                 Explain(id)
                 Explain(if (coin.height > 0) "Confirmed at block ${coin.height}" else "Unconfirmed")

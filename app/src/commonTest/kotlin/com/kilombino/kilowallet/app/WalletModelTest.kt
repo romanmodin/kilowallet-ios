@@ -596,4 +596,65 @@ class WalletModelTest {
         assertEquals(0, p.loadCalls)
     }
 
+    @Test fun backupCheckRequiresAuthenticationAndMatchesExactPassphrase() = checkModel { model, p ->
+        model.restore(words, "Exact Case "); advanceUntilIdle()
+        model.startBackupCheck()
+        assertEquals(1, p.loadCalls)
+        assertTrue(model.state.value.screen != Screen.BackupCheck)
+        p.unlock!!(null, "cancelled")
+        assertTrue(model.state.value.screen != Screen.BackupCheck)
+        model.startBackupCheck()
+        p.unlock!!(encodeSecret(words, "Exact Case "), null)
+        assertEquals(Screen.BackupCheck, model.state.value.screen)
+        model.verifyBackup(words, "Exact Case"); advanceUntilIdle()
+        assertNull(model.state.value.backupCheckedAt)
+        assertEquals(Screen.BackupCheck, model.state.value.screen)
+        model.verifyBackup(words, "Exact Case "); advanceUntilIdle()
+        assertEquals(p.now, model.state.value.backupCheckedAt)
+        assertEquals(Screen.Settings, model.state.value.screen)
+        assertTrue(p.values.values.none { it.contains(words.joinToString(" ")) || it.contains("Exact Case") })
+        val first = model.state.value.walletId!!
+        model.addWallet(); model.restore(words, "second"); advanceUntilIdle()
+        assertNull(model.state.value.backupCheckedAt)
+        model.selectWallet(first); advanceUntilIdle()
+        assertEquals(p.now, model.state.value.backupCheckedAt)
+    }
+
+    @Test fun backgroundCancelsBackupVerificationAndLateUnlock() = checkModel { model, p ->
+        model.restore(words, ""); advanceUntilIdle()
+        model.startBackupCheck()
+        val late = p.unlock!!
+        model.onBackground()
+        late(encodeSecret(words, ""), null)
+        assertEquals(Screen.Home, model.state.value.screen)
+        model.startBackupCheck()
+        p.unlock!!(encodeSecret(words, ""), null)
+        model.verifyBackup(words, "")
+        model.onBackground(); advanceUntilIdle()
+        assertNull(model.state.value.backupCheckedAt)
+        assertFalse(model.state.value.checkingBackup)
+        assertTrue(p.values.keys.none { it.startsWith("backup.checked.") })
+    }
+
+    @Test fun recipientsAndUnitsSurviveSwitchAndStaleRecipientEditIsRejected() = checkModel { model, p ->
+        model.restore(words, ""); advanceUntilIdle()
+        val first = model.state.value.walletId!!
+        val address = "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"
+        assertTrue(model.saveRecipient(first, address, "Alice"))
+        model.setAmountUnit(AmountUnit.XBT)
+        model.addWallet(); model.restore(words, "second"); advanceUntilIdle()
+        assertEquals(AmountUnit.XBT, model.state.value.amountUnit)
+        assertTrue(model.state.value.recipients.isEmpty())
+        assertFalse(model.saveRecipient(first, address, "Wrong wallet"))
+        model.selectWallet(first); advanceUntilIdle()
+        assertEquals("Alice", model.state.value.recipients.single().name)
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val restarted = WalletModel(p, dispatcher, dispatcher)
+        try {
+            advanceUntilIdle()
+            assertEquals(AmountUnit.XBT, restarted.state.value.amountUnit)
+            assertEquals("Alice", restarted.state.value.recipients.single().name)
+        } finally { restarted.close(); advanceUntilIdle() }
+    }
+
 }
