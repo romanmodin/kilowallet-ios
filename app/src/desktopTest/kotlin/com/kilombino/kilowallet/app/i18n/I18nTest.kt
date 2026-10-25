@@ -31,6 +31,11 @@ class I18nTest {
         I18n.lang.value = I18n.ES
     }
 
+    @Test fun receiveTitleUsesTheActualChainCoin() {
+        I18n.lang.value = I18n.ES
+        assertEquals("Recibir XBT", I18n.tr("Receive ${com.kilombino.kilowallet.core.chain.Chain.COIN}"))
+    }
+
     @Test fun templatesUpperCaseAndListItems() {
         I18n.lang.value = I18n.ES
         assertEquals("\"pato\" no es una palabra de recuperación.", I18n.tr("\"pato\" is not a seed word."))
@@ -166,6 +171,7 @@ class I18nTest {
         " UTC",
         "0123456789abcdefABCDEF",
         "XBT",
+        "12 345 XBT (XBT)",
         "XBT BLAKE2b",
         "XBT · BLAKE2B",
         "Z",
@@ -248,7 +254,7 @@ class I18nTest {
         t = expr.replace(t) { m ->
             val e = m.groupValues[1]
             when {
-                "Chain.COIN" in e -> "BTC"; "Chain.TICKER" in e -> "XBT"; "Chain.DISPLAY" in e -> "BLAKE2b"
+                "Chain.COIN" in e -> com.kilombino.kilowallet.core.chain.Chain.COIN; "Chain.TICKER" in e -> "XBT"; "Chain.DISPLAY" in e -> "BLAKE2b"
                 "EXPLORER" in e -> "mempool.kilombino.com"; "unlockName" in e -> "Face ID"
                 "endpoint" in e -> "fulcrum.kilombino.com:17717"
                 else -> "12 345"

@@ -2480,5 +2480,8 @@
 "Closing with {0} people · collecting the equal outputs": "Tancant amb {0} persones · recollint les sortides iguals",
 "Waiting for the others to answer, until {0}. Whoever has not answered by then is left out; if too few are left, the pool opens again without them.": "Esperant que responguin els altres, fins a les {0}. Qui no hagi respost per aleshores en queda fora; si en queden massa pocs, el pool es torna a obrir sense ells.",
 "{0}: {1} → {2} + {3} change · fee {4}": "{0}: {1} → {2} + {3} de canvi · comissió {4}",
-"{0}: {1} → {2} · fee {3}": "{0}: {1} → {2} · comissió {3}"
+"{0}: {1} → {2} · fee {3}": "{0}: {1} → {2} · comissió {3}",
+  "Receive XBT": "Rep XBT",
+  "Your XBT": "Els teus XBT",
+  "Send XBT": "Envia XBT"
 }

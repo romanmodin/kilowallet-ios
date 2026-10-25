@@ -2480,5 +2480,8 @@
 "Closing with {0} people · collecting the equal outputs": "Schließt mit {0} Personen · sammelt die gleichen Ausgaben",
 "Waiting for the others to answer, until {0}. Whoever has not answered by then is left out; if too few are left, the pool opens again without them.": "Warte auf die Antworten der anderen, bis {0}. Wer bis dahin nicht geantwortet hat, bleibt draußen; sind es dann zu wenige, öffnet sich der Pool ohne sie wieder.",
 "{0}: {1} → {2} + {3} change · fee {4}": "{0}: {1} → {2} + {3} Wechselgeld · Gebühr {4}",
-"{0}: {1} → {2} · fee {3}": "{0}: {1} → {2} · Gebühr {3}"
+"{0}: {1} → {2} · fee {3}": "{0}: {1} → {2} · Gebühr {3}",
+  "Receive XBT": "XBT empfangen",
+  "Your XBT": "Deine XBT",
+  "Send XBT": "XBT senden"
 }

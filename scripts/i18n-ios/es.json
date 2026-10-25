@@ -504,5 +504,8 @@
   "− Search and filters": "− Búsqueda y filtros",
   "− Technical details": "− Detalles técnicos",
   "✓ matches one server-supplied header": "✓ coincide con una cabecera proporcionada por el servidor",
-  "{0}: verify this fingerprint with the server operator using a separate trusted channel. No wallet queries have been sent. A wrong fingerprint could expose your addresses and allow false balance information.": "{0}: comprueba esta huella con el operador del servidor por un canal independiente de confianza. No se han enviado consultas del monedero. Una huella incorrecta podría revelar tus direcciones y permitir información falsa del saldo."
+  "{0}: verify this fingerprint with the server operator using a separate trusted channel. No wallet queries have been sent. A wrong fingerprint could expose your addresses and allow false balance information.": "{0}: comprueba esta huella con el operador del servidor por un canal independiente de confianza. No se han enviado consultas del monedero. Una huella incorrecta podría revelar tus direcciones y permitir información falsa del saldo.",
+  "Receive XBT": "Recibir XBT",
+  "Your XBT": "Tus XBT",
+  "Send XBT": "Enviar XBT"
 }

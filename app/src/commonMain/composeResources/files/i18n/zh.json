@@ -2467,5 +2467,8 @@
 "Closing with {0} people · collecting the equal outputs": "正在以 {0} 人关闭 · 收集等额输出",
 "Waiting for the others to answer, until {0}. Whoever has not answered by then is left out; if too few are left, the pool opens again without them.": "正在等待其他人回答，截止 {0}。到时还没回答的人会被排除；如果剩下的人太少，池会在没有他们的情况下重新开放。",
 "{0}: {1} → {2} + {3} change · fee {4}": "{0}：{1} → {2} + {3} 找零 · 手续费 {4}",
-"{0}: {1} → {2} · fee {3}": "{0}：{1} → {2} · 手续费 {3}"
+"{0}: {1} → {2} · fee {3}": "{0}：{1} → {2} · 手续费 {3}",
+  "Receive XBT": "接收 XBT",
+  "Your XBT": "你的 XBT",
+  "Send XBT": "发送 XBT"
 }
