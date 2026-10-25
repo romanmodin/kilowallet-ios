@@ -30,25 +30,35 @@ xcrun simctl install "$UDID" "$APP"
 
 n=0
 failures=0
-for screen in welcome create restore watch home receive send review settings wallets history private note request export coins recipients backup filters units; do
+for screen in welcome create restore watch home receive send review settings wallets history private note request export coins recipients backup filters units replace pool-intro pools pool-join pool-create pool-pay pool-round receive@es settings@es pools@es pool-round@zh; do
   n=$((n + 1))
+  base=${screen%@*}
+  name=${screen/@/-}
   if [ -n "$ONLY" ] && [ "$screen" != "$ONLY" ]; then continue; fi
   xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
   DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" data)
-  rm -f "$DATA/Documents/kw-ready-$screen"
-  xcrun simctl launch --console-pty "$UDID" "$BUNDLE" -kwDemo "$screen" > "screenshots-logs/$screen.log" 2>&1 &
+  rm -f "$DATA/Documents/kw-ready-$base"
+  xcrun simctl launch --console-pty "$UDID" "$BUNDLE" -kwDemo "$screen" > "screenshots-logs/$name.log" 2>&1 &
   LP=$!
-  limit=20; [ "$screen" = home ] && limit=150
+  limit=20; [ "$base" = home ] && limit=150
+  case "$base" in pool*) limit=90 ;; esac
   for i in $(seq 1 $limit); do
-    [ -f "$DATA/Documents/kw-ready-$screen" ] && break
+    [ -f "$DATA/Documents/kw-ready-$base" ] && break
     sleep 1
   done
-  if [ -f "$DATA/Documents/kw-ready-$screen" ]; then echo "$screen: ready after ${i}s"; else echo "$screen: NOT ready after ${limit}s"; exit 1; fi
+  if [ -f "$DATA/Documents/kw-ready-$base" ]; then echo "$screen: ready after ${i}s"; else echo "$screen: NOT ready after ${limit}s"; exit 1; fi
   sleep 3
-  SHOT="$OUT/$(printf %02d $n)-$screen.png"
+  SHOT="$OUT/$(printf %02d $n)-$name.png"
   xcrun simctl io "$UDID" screenshot "$SHOT"
   expected=""
   case "$screen" in
+    pool-intro|pools|pool-round|pools@es|pool-round@zh) expected="Kilojoin" ;;
+    pool-join) expected="Join" ;;
+    pool-create) expected="Open a pool" ;;
+    pool-pay) expected="Pay through a pool" ;;
+    receive@es) expected="Recibir" ;;
+    settings@es) expected="Ajustes" ;;
+    replace) expected="Cancel" ;;
     recipients) expected="Saved recipients" ;;
     backup) expected="Check written backup" ;;
     filters) expected="Search and filters" ;;

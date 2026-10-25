@@ -34,9 +34,9 @@ class CertificateChangedException(val endpoint: String, val fingerprint: String)
     ElectrumException("Check the TLS certificate fingerprint of $endpoint before trusting it. No application data was sent.")
 
 /**
- * A minimal Electrum protocol 1.4 client, ported from the Android app's `chain/ElectrumClient.kt`
- * (same requests, same checks) over a platform [LineTransport] instead of java.net sockets, and
- * kotlinx.serialization instead of org.json.
+ * A minimal Electrum client (protocol 1.4 to 1.6), ported from the Android app's
+ * `chain/ElectrumClient.kt` (same requests, same checks) over a platform [LineTransport] instead
+ * of java.net sockets, and kotlinx.serialization instead of org.json.
  *
  * As in the app: `jsonrpc: "2.0"` is always sent; certificates are self-signed and pinned on
  * explicit first-use approval; no wallet queries are sent until the fingerprint is accepted.
@@ -47,7 +47,6 @@ class ElectrumClient(
     private val pinnedFingerprint: String?,
     private val transports: TransportFactory,
 ) {
-    companion object { const val MAX_LINE_BYTES = 4 * 1024 * 1024 }
 
     private var conn: LineTransport? = null
     private var nextId = 0
@@ -58,6 +57,27 @@ class ElectrumClient(
 
     var serverVersion: String? = null
         private set
+
+    /** The protocol version the server agreed to: "1.4" up to "1.6". */
+    var protocol: String = "1.4"
+        private set
+
+    /**
+     * Agree on a protocol version: anything from 1.4 to 1.6 (Android app: `negotiate`, 1.1.1). A
+     * server whose chain has headers that are not 80 bytes (BLAKE2b's are 164) sends them in
+     * batches only from 1.6 on, so one that refuses blockchain.block.headers below it (Shulcrum 2.1)
+     * picks 1.6; a server that knows only 1.4 keeps it. Nothing this client calls changes between
+     * them but blockchain.relayfee, gone in 1.6 (see [relayFeePerKb]); headers are read in either form.
+     */
+    private fun negotiate() {
+        val version = call("server.version", buildJsonArray {
+            add(JsonPrimitive("Kilowallet-iOS"))
+            add(buildJsonArray { add(JsonPrimitive("1.4")); add(JsonPrimitive("1.6")) })
+        })
+        val arr = version as? JsonArray
+        serverVersion = arr?.firstOrNull()?.jsonPrimitive?.contentOrNull ?: version.toString()
+        protocol = arr?.getOrNull(1)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() } ?: "1.4"
+    }
 
     fun connect() {
         close()
@@ -75,8 +95,7 @@ class ElectrumClient(
             if (pinnedFingerprint == null || !pinnedFingerprint.equals(fp, ignoreCase = true)) {
                 throw CertificateChangedException(endpoint.toString(), fp)
             }
-            val version = call("server.version", buildJsonArray { add(JsonPrimitive("Kilowallet-iOS")); add(JsonPrimitive("1.4")) })
-            serverVersion = (version as? JsonArray)?.firstOrNull()?.jsonPrimitive?.contentOrNull ?: version.toString()
+            negotiate()
             // A format/PoW check rejects other chains and corrupt replies. It does not establish
             // the highest-work chain: confirmations still depend on the selected server.
             val tip = BlockHeader.parse(tipHeaderHex())
@@ -157,6 +176,71 @@ class ElectrumClient(
     fun status(scriptHash: String): String? =
         (call("blockchain.scripthash.subscribe", params(scriptHash)) as? JsonPrimitive)?.contentOrNull
 
+    /**
+     * [status] of many scripthashes in one go (Android app: `statuses`): every request is written
+     * first and the answers read as they come (by id), so a scan waits for one round trip per
+     * batch instead of one per address.
+     */
+    fun statuses(scriptHashes: List<String>): List<String?> {
+        if (scriptHashes.size <= 1) return scriptHashes.map { status(it) }
+        return batch("blockchain.scripthash.subscribe", scriptHashes).map { (it as? JsonPrimitive)?.contentOrNull }
+    }
+
+    /** [listUnspent] of many scripthashes, batched like [statuses] (Android app: `listUnspentMany`). */
+    fun listUnspentMany(scriptHashes: List<String>): List<List<Utxo>> {
+        if (scriptHashes.size <= 1) return scriptHashes.map { listUnspent(it) }
+        return batch("blockchain.scripthash.listunspent", scriptHashes).map { utxos(it as? JsonArray) }
+    }
+
+    /** One request per scripthash, all written before any answer is read; the answers in order. */
+    private fun batch(method: String, scriptHashes: List<String>): List<JsonElement?> {
+        // Servers cap how many requests may wait at once: a long list goes in rounds.
+        if (scriptHashes.size > BATCH) return scriptHashes.chunked(BATCH).flatMap { batch(method, it) }
+        val what = method.substringAfterLast('.')
+        val c = conn ?: throw ElectrumException("client not connected")
+        val ids = scriptHashes.map { nextId++ }
+        // All the requests in a single write (one line each), so they leave in one go.
+        val lines = scriptHashes.zip(ids).joinToString("\n") { (sh, id) ->
+            buildJsonObject {
+                put("jsonrpc", "2.0")
+                put("id", id)
+                put("method", method)
+                put("params", params(sh))
+            }.toString()
+        }
+        try {
+            c.writeLine(lines)
+        } catch (e: Exception) {
+            throw ElectrumException("Lost the connection while sending $what: ${e.message}", e)
+        }
+        val want = ids.toHashSet()
+        val got = HashMap<Int, JsonElement?>()
+        val started = TimeSource.Monotonic.markNow()
+        var unrelated = 0
+        while (got.size < ids.size) {
+            if (started.elapsedNow() > 90.seconds) throw ElectrumException("Timed out waiting for $what")
+            val line = try {
+                c.readLine()
+            } catch (e: Exception) {
+                throw ElectrumException("Lost the connection while waiting for $what: ${e.message}", e)
+            } ?: throw ElectrumException("The server closed the connection during $what")
+            require(line.length <= MAX_LINE_BYTES) { "Server response exceeds the size limit" }
+            val obj = try { Json.parseToJsonElement(line).jsonObject } catch (e: Exception) {
+                throw ElectrumException("Malformed response to $what", e)
+            }
+            val id = (obj["id"] as? JsonPrimitive)?.intOrNull
+            if (id == null || id !in want) {
+                if (++unrelated > 32) throw ElectrumException("Too many unrelated responses to $what")
+                continue
+            }
+            if (id in got) throw ElectrumException("Duplicate response to $what")
+            val err = obj["error"]
+            if (err != null && err !is JsonNull) throw ElectrumException("$what: $err")
+            got[id] = obj["result"] ?: JsonNull
+        }
+        return ids.map { got[it] }
+    }
+
     data class HistoryItem(val txid: String, val height: Int)
 
     fun history(scriptHash: String): List<HistoryItem> {
@@ -169,22 +253,30 @@ class ElectrumClient(
 
     data class Utxo(val txid: String, val vout: Int, val value: Long, val height: Int)
 
-    fun listUnspent(scriptHash: String): List<Utxo> {
-        val r = call("blockchain.scripthash.listunspent", params(scriptHash)) as? JsonArray ?: return emptyList()
-        return r.map {
-            val o = it.jsonObject
-            Utxo(o["tx_hash"]!!.jsonPrimitive.content, o["tx_pos"]!!.jsonPrimitive.int,
-                o["value"]!!.jsonPrimitive.longOrNull ?: 0, o["height"]?.jsonPrimitive?.intOrNull ?: 0)
-        }
-    }
+    fun listUnspent(scriptHash: String): List<Utxo> =
+        utxos(call("blockchain.scripthash.listunspent", params(scriptHash)) as? JsonArray)
+
+    private fun utxos(r: JsonArray?): List<Utxo> = r?.map {
+        val o = it.jsonObject
+        Utxo(o["tx_hash"]!!.jsonPrimitive.content, o["tx_pos"]!!.jsonPrimitive.int,
+            o["value"]!!.jsonPrimitive.longOrNull ?: 0, o["height"]?.jsonPrimitive?.intOrNull ?: 0)
+    } ?: emptyList()
 
     /** Estimated fee to confirm within [blocks], in BTC/kB; -1 when the server has no estimate. */
     fun estimateFeePerKb(blocks: Int): Double =
         (call("blockchain.estimatefee", params(blocks)) as? JsonPrimitive)?.doubleOrNull ?: -1.0
 
     /** The server's minimum relay fee, in BTC/kB. */
-    fun relayFeePerKb(): Double =
-        (call("blockchain.relayfee", JsonArray(emptyList())) as? JsonPrimitive)?.doubleOrNull ?: 0.0
+    fun relayFeePerKb(): Double {
+        if (protocolAtLeast("1.6")) {
+            // blockchain.relayfee is gone in 1.6; mempool.get_info carries the same number.
+            val info = call("mempool.get_info", JsonArray(emptyList())) as? JsonObject
+            return info?.get("minrelaytxfee")?.jsonPrimitive?.doubleOrNull?.takeIf { !it.isNaN() } ?: 0.0
+        }
+        return (call("blockchain.relayfee", JsonArray(emptyList())) as? JsonPrimitive)?.doubleOrNull ?: 0.0
+    }
+
+    internal fun protocolAtLeast(v: String): Boolean = protocolAtLeast(protocol, v)
 
     /** The raw (hex) transaction for [txid]; it must hash to [txid] or it is refused. */
     fun transaction(txid: String): String {
@@ -218,4 +310,21 @@ class ElectrumClient(
         runCatching { conn?.close() }
         conn = null
     }
+
+    companion object {
+        const val MAX_LINE_BYTES = 4 * 1024 * 1024
+        /** Most requests a batch leaves waiting at once (Android app: chunks of 50). */
+        const val BATCH = 50
+    }
+}
+
+/** Whether protocol version [have] ("1.4", "1.6", "1.4.2") is at least [want]. */
+internal fun protocolAtLeast(have: String, want: String): Boolean {
+    val a = have.split('.').map { it.toIntOrNull() ?: 0 }
+    val b = want.split('.').map { it.toIntOrNull() ?: 0 }
+    for (i in 0 until maxOf(a.size, b.size)) {
+        val x = a.getOrElse(i) { 0 }; val y = b.getOrElse(i) { 0 }
+        if (x != y) return x > y
+    }
+    return true
 }

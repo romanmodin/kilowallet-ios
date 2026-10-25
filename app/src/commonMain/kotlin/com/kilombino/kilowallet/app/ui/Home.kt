@@ -25,7 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import com.kilombino.kilowallet.app.i18n.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,7 +51,9 @@ import com.kilombino.kilowallet.app.Screen
 import com.kilombino.kilowallet.app.UiState
 import com.kilombino.kilowallet.app.WalletKind
 import com.kilombino.kilowallet.app.WalletModel
+import com.kilombino.kilowallet.core.market.paymentRequest
 import com.kilombino.kilowallet.core.chain.Chain
+import com.kilombino.kilowallet.core.market.Fiat
 import com.kilombino.kilowallet.core.wallet.TxConf
 import com.kilombino.kilowallet.core.wallet.formatBtc
 import com.kilombino.kilowallet.core.wallet.formatSats
@@ -125,6 +127,17 @@ fun HomeScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
             if (hot) PrimaryButton("Send", Modifier.weight(1f), enabled = state.scan is ScanPhase.Done && state.total > 0) { model.go(Screen.Send) }
         }
         if (!hot) Explain("Watch-only: this wallet can receive and show its coins, but not spend them.")
+        // Kilojoin: shared transactions (pools), in sight on the wallet's main screen.
+        Panel {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    SectionLabel("Kilojoin")
+                    Text(if (hot) "Shared transactions: pools with equal outputs, and payments through them."
+                        else "Shared transactions need a wallet that can sign.", style = MaterialTheme.typography.bodySmall, color = TextSoft)
+                }
+                LinkText("open ›", color = Purple) { model.go(Screen.Pools) }
+            }
+        }
 
         Panel {
             SectionLabel("Movements · confirmations")
@@ -143,7 +156,7 @@ fun HomeScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
             } else {
                 Explain("tap a movement for its details")
                 if (matching.isEmpty()) Explain("No matching movements.")
-                matching.take(limit).forEach { tx -> MovementRow(tx, state.hideAmounts, state.notes[tx.txid], state.amountUnit) { detail = tx } }
+                matching.take(limit).forEach { tx -> MovementRow(tx, state.hideAmounts, state.notes[tx.txid], state.amountUnit, hot && tx.pending && (tx.amount ?: 0) < 0, { cancel -> model.go(Screen.Replace(tx.txid, cancel)) }) { detail = tx } }
                 if (matching.size > limit) LinkText("Show 50 more") { limit += 50 }
             }
         }
@@ -154,6 +167,7 @@ fun HomeScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
 
     detail?.let { tx -> MovementDialog(tx, state.hideAmounts, state.notes[tx.txid] ?: TransactionNote(), state.amountUnit,
         onSave = { label, note -> model.saveTransactionNote(state.walletId ?: "", tx.txid, label, note) },
+        onReplace = if (hot && tx.pending && (tx.amount ?: 0) < 0) ({ cancel -> detail = null; model.go(Screen.Replace(tx.txid, cancel)) }) else null,
         onClose = { detail = null }) }
     if (exportConfirm) AlertDialog(
         onDismissRequest = { exportConfirm = false },
@@ -167,7 +181,7 @@ fun HomeScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
 }
 
 @Composable
-private fun MovementRow(tx: TxConf, hidden: Boolean, note: TransactionNote?, unit: AmountUnit, onClick: () -> Unit) {
+private fun MovementRow(tx: TxConf, hidden: Boolean, note: TransactionNote?, unit: AmountUnit, canReplace: Boolean, onReplace: (Boolean) -> Unit, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -178,7 +192,16 @@ private fun MovementRow(tx: TxConf, hidden: Boolean, note: TransactionNote?, uni
                 style = MaterialTheme.typography.bodyMedium, color = TextMain, maxLines = 2)
             Text(shortTxid(tx.txid), style = MaterialTheme.typography.bodySmall, color = TextFaint)
         }
-        ConfBadge(tx)
+        if (canReplace) {
+            // Status above, actions below: side by side they squeezed the amount (Android 1.2.5).
+            Column(horizontalAlignment = Alignment.End) {
+                ConfBadge(tx)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LinkText("⚡ speed up", color = Purple) { onReplace(false) }
+                    LinkText("✕ cancel", color = Warn) { onReplace(true) }
+                }
+            }
+        } else ConfBadge(tx)
     }
 }
 
@@ -197,7 +220,7 @@ private fun ConfBadge(tx: TxConf) {
 
 @Composable
 private fun MovementDialog(tx: TxConf, hidden: Boolean, saved: TransactionNote, unit: AmountUnit,
-    onSave: (String, String) -> Boolean, onClose: () -> Unit) {
+    onSave: (String, String) -> Boolean, onReplace: ((Boolean) -> Unit)?, onClose: () -> Unit) {
     var label by remember(tx.txid) { mutableStateOf(saved.label) }
     var note by remember(tx.txid) { mutableStateOf(saved.note) }
     val clipboard = LocalClipboardManager.current
@@ -224,6 +247,10 @@ private fun MovementDialog(tx: TxConf, hidden: Boolean, saved: TransactionNote, 
                 LinkText("open on ${Chain.EXPLORER.removePrefix("https://")}", color = Purple) {
                     runCatching { uri.openUri("${Chain.EXPLORER}/tx/${tx.txid}") }
                 }
+                onReplace?.let { r ->
+                    LinkText("⚡ SPEED UP (RBF)", color = Purple) { r(false) }
+                    LinkText("✕ CANCEL (RBF)", color = Warn) { r(true) }
+                }
             }
         },
         confirmButton = { TextButton(onClick = { if (hidden || onSave(label, note)) onClose() }) {
@@ -233,6 +260,10 @@ private fun MovementDialog(tx: TxConf, hidden: Boolean, saved: TransactionNote, 
     )
 }
 
+/**
+ * The next unused address, and ◀ ▶ through every unused one (the ones skipped below the last used
+ * address included), as the Android app's `ui/HotWallet.kt` ReceiveSheet does.
+ */
 @Composable
 fun ReceiveScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
     val clipboard = LocalClipboardManager.current
@@ -264,7 +295,8 @@ fun ReceiveScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
             }
             Text(chunked(address), style = MaterialTheme.typography.titleMedium, color = TextMain,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-            Text(path, style = MaterialTheme.typography.bodySmall, color = TextFaint)
+            Text(path,
+                style = MaterialTheme.typography.bodySmall, color = TextFaint)
         }
         if (wantsAmount) PrimaryButton(if (copied == "request") "Copied" else "Copy payment request", Modifier.fillMaxWidth(), enabled = valid) {
             payload?.let { clipboard.setText(AnnotatedString(it)); copied = "request" }

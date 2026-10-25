@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import com.kilombino.kilowallet.app.i18n.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,10 +22,25 @@ import androidx.compose.ui.unit.dp
 import com.kilombino.kilowallet.app.AppPlatform
 import com.kilombino.kilowallet.app.Screen
 import com.kilombino.kilowallet.app.WalletModel
+import com.kilombino.kilowallet.app.i18n.I18n
+import com.kilombino.kilowallet.app.i18n.phoneLanguages
 
 @Composable
 fun App(platform: AppPlatform, model: WalletModel = remember { WalletModel(platform) }) {
-    LaunchedEffect(Unit) { platform.demoScreen?.let { model.setUpDemo(it) } }
+    // Screenshot mode may name a language after the screen: "receive@es".
+    val demo = platform.demoScreen?.substringBefore('@')
+    remember {
+        I18n.init(platform.prefs, phoneLanguages())
+        platform.demoScreen?.substringAfter('@', "")?.takeIf { it.isNotEmpty() }?.let { I18n.set(it) }
+    }
+    val lang = I18n.lang.value
+    LaunchedEffect(lang) { I18n.ensure(lang) }
+    LaunchedEffect(Unit) {
+        demo?.let {
+            I18n.ensure(I18n.lang.value) // the screenshot waits for the table, not English first
+            model.setUpDemo(it)
+        }
+    }
     val state by model.state.collectAsState()
 
     KilowalletTheme {
@@ -45,6 +60,11 @@ fun App(platform: AppPlatform, model: WalletModel = remember { WalletModel(platf
                         Screen.Send -> SendScreen(model, state, platform)
                         Screen.Settings -> SettingsScreen(model, state, platform)
                         is Screen.ShowWords -> ShowWordsScreen(model, s.words)
+                        is Screen.Replace -> ReplaceScreen(model, state, platform, s.txid, s.cancel)
+                        Screen.Pools -> PoolsScreen(model, state, platform)
+                        Screen.PoolCreate -> PoolCreateScreen(model, state)
+                        is Screen.PoolJoin -> PoolJoinScreen(model, state, s.poolId)
+                        Screen.PoolPay -> PoolPayScreen(model, state)
                     }
                 }
             }

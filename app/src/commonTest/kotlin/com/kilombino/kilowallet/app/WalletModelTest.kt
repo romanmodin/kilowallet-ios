@@ -68,17 +68,20 @@ class WalletModelTest {
             val responder = reply ?: throw ElectrumException("Offline test")
             object : LineTransport {
                 override val fingerprint = "a".repeat(64)
-                var request: JsonObject? = null
+                val requests = ArrayDeque<JsonObject>()
                 override fun writeLine(line: String) {
-                    request = Json.parseToJsonElement(line).jsonObject
-                    if (request!!["method"]!!.jsonPrimitive.content == "blockchain.transaction.broadcast") {
-                        val raw = request!!["params"]!!.jsonArray[0].jsonPrimitive.content
-                        check(values.values.contains(raw)) { "Transaction must be saved before broadcast" }
-                        sent += raw
+                    for (part in line.split('\n').filter { it.isNotBlank() }) {
+                        val request = Json.parseToJsonElement(part).jsonObject
+                        requests.addLast(request)
+                        if (request["method"]!!.jsonPrimitive.content == "blockchain.transaction.broadcast") {
+                            val raw = request["params"]!!.jsonArray[0].jsonPrimitive.content
+                            check(values.values.contains(raw)) { "Transaction must be saved before broadcast" }
+                            sent += raw
+                        }
                     }
                 }
                 override fun readLine(): String {
-                    val q = request!!
+                    val q = requests.removeFirst()
                     return buildJsonObject { put("id", q["id"]!!); put("result", responder(q)) }.toString()
                 }
                 override fun close() {}
@@ -99,6 +102,45 @@ class WalletModelTest {
         val model = WalletModel(platform, dispatcher, dispatcher)
         try { block(model, platform) }
         finally { model.close(); advanceUntilIdle(); Dispatchers.resetMain() }
+    }
+
+    @Test fun version04UpgradePreservesPublishedWalletCatalogKeysAndPolicies() = checkModel { model, p ->
+        val one = Signer.accountZpub(words, "")
+        val two = Signer.accountZpub(words, "second")
+        val catalog = WalletCatalog(p.prefs)
+        val first = catalog.candidate("Everyday", WalletKind.HOT, one)
+        catalog.begin(first); catalog.finish()
+        val second = catalog.candidate("Savings", WalletKind.HOT, two)
+        catalog.begin(second); catalog.finish()
+        p.secrets[first.id] = encodeSecret(words, "")
+        p.secrets[second.id] = encodeSecret(words, "second")
+        val coin = "ab".repeat(32) + ":0"
+        FrozenCoins(p.prefs).set(two, coin, true)
+        p.values["privacy.hideAmounts"] = "true"
+        p.values["display.unit"] = "XBT"
+        p.values["pending.$two"] = "0200000001" + "00".repeat(32) + "ffffffff00ffffffff01e803000000000000015100000000"
+        val settings = p.values.toMap()
+        val secrets = p.secrets.toMap()
+        model.close(); advanceUntilIdle()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val upgraded = WalletModel(p, dispatcher, dispatcher)
+        try {
+            advanceUntilIdle()
+            assertEquals(listOf(first, second), upgraded.state.value.wallets)
+            assertEquals(second.id, upgraded.state.value.walletId)
+            assertEquals(two, upgraded.state.value.zpub)
+            assertTrue(upgraded.state.value.hideAmounts)
+            assertEquals(AmountUnit.XBT, upgraded.state.value.amountUnit)
+            assertEquals(setOf(coin), upgraded.state.value.frozenCoins)
+            assertEquals(settings, p.values)
+            assertEquals(secrets, p.secrets)
+            assertEquals(0, p.loadCalls)
+            assertEquals(0, p.saveCalls)
+            assertTrue(p.deletedIds.isEmpty())
+            upgraded.go(Screen.Send)
+            assertIs<SendPhase.Pending>(upgraded.state.value.send)
+            assertTrue(p.sent.isEmpty())
+        } finally { upgraded.close(); advanceUntilIdle() }
     }
 
     @Test fun rapidConfirmOnlyPromptsOnceAndBackgroundInvalidatesUnlock() = checkModel { model, p ->
@@ -256,6 +298,10 @@ class WalletModelTest {
         p.reply = { q -> when(q["method"]!!.jsonPrimitive.content) {
             "server.version" -> buildJsonArray { add("test"); add("1.4") }
             "blockchain.headers.subscribe" -> buildJsonObject { put("height", 976086); put("hex", "000000a0700c8b9690014507c6c277900d743ac3ed6d814f90772d060000000000000000670caeac2404c80798669b242623ea7310be8f47166168e9734baab9dec80446b2c2c66a2ad80019be9815dad0f4b1da0000000000000000b10cf8578500000000000000b2c2c66a7501000000000000000000000000000000000000d6e40e000000000000000000000000000000000000000000000000000000000000000000") }
+            "blockchain.scripthash.subscribe" -> {
+                val hash = q["params"]!!.jsonArray[0].jsonPrimitive.content
+                if (hash in late) JsonPrimitive("used") else JsonNull
+            }
             "blockchain.scripthash.get_history" -> {
                 val hash = q["params"]!!.jsonArray[0].jsonPrimitive.content
                 histories += hash
@@ -526,6 +572,7 @@ class WalletModelTest {
         p.reply = { q -> when (q["method"]!!.jsonPrimitive.content) {
             "server.version" -> buildJsonArray { add("test"); add("1.4") }
             "blockchain.headers.subscribe" -> buildJsonObject { put("height", 976086); put("hex", "000000a0700c8b9690014507c6c277900d743ac3ed6d814f90772d060000000000000000670caeac2404c80798669b242623ea7310be8f47166168e9734baab9dec80446b2c2c66a2ad80019be9815dad0f4b1da0000000000000000b10cf8578500000000000000b2c2c66a7501000000000000000000000000000000000000d6e40e000000000000000000000000000000000000000000000000000000000000000000") }
+            "blockchain.scripthash.subscribe" -> JsonNull
             "blockchain.scripthash.get_history" -> JsonArray(emptyList())
             else -> error("Unexpected request")
         } }

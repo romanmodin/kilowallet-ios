@@ -8,12 +8,12 @@ on:
 
 concurrency:
   group: ios-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   simulator:
     name: Tests, simulator build, screenshots
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -31,8 +31,15 @@ jobs:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
-      - name: Xcode version
-        run: xcodebuild -version
+      - name: Select supported Xcode
+        run: |
+          set -euo pipefail
+          selected=$(python3 -c 'import pathlib,re; p=list(pathlib.Path("/Applications").glob("Xcode_26*.app")); print(max(p,key=lambda x:tuple(map(int,re.findall(r"[0-9]+",x.name)))) if p else "")')
+          test -n "$selected"
+          sudo xcode-select --switch "$selected/Contents/Developer"
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          test "${sdk%%.*}" -ge 26
 
       - name: Unit tests (JVM and iOS simulator)
         run: ./gradlew :core:jvmTest :core:iosSimulatorArm64Test :app:desktopTest :app:iosSimulatorArm64Test --stacktrace
@@ -84,7 +91,7 @@ jobs:
 
   device:
     name: Release build for device (unsigned)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -98,6 +105,16 @@ jobs:
         with:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+      - name: Select supported Xcode
+        run: |
+          set -euo pipefail
+          selected=$(python3 -c 'import pathlib,re; p=list(pathlib.Path("/Applications").glob("Xcode_26*.app")); print(max(p,key=lambda x:tuple(map(int,re.findall(r"[0-9]+",x.name)))) if p else "")')
+          test -n "$selected"
+          sudo xcode-select --switch "$selected/Contents/Developer"
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          test "${sdk%%.*}" -ge 26
+
       - name: Build Release for iphoneos without signing
         run: |
           set -euo pipefail

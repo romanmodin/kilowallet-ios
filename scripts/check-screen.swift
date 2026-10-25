@@ -10,7 +10,7 @@ func normalized(_ text: String) -> String {
 let expected = normalized(CommandLine.arguments[2])
 let request = VNRecognizeTextRequest()
 request.recognitionLevel = .accurate
-request.recognitionLanguages = ["en-US"]
+request.recognitionLanguages = ["en-US", "es-ES", "zh-Hans"]
 request.usesLanguageCorrection = true
 do {
     try VNImageRequestHandler(url: image, options: [:]).perform([request])

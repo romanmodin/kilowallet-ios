@@ -1,11 +1,16 @@
 package com.kilombino.kilowallet.app
 
+import com.kilombino.kilowallet.app.i18n.I18n
 import com.kilombino.kilowallet.core.chain.NodeEndpoint
 import com.kilombino.kilowallet.core.crypto.Address
 import com.kilombino.kilowallet.core.crypto.Bip32
 import com.kilombino.kilowallet.core.crypto.Bip39
 import com.kilombino.kilowallet.core.crypto.ScriptType
+import com.kilombino.kilowallet.core.market.Fiat
+import com.kilombino.kilowallet.core.market.MarketData
+import com.kilombino.kilowallet.core.market.MarketFeed
 import com.kilombino.kilowallet.core.wallet.AddressRow
+import com.kilombino.kilowallet.core.wallet.ReplacePlanner
 import com.kilombino.kilowallet.core.wallet.ScanEvent
 import com.kilombino.kilowallet.core.wallet.Scanner
 import com.kilombino.kilowallet.core.wallet.SendDraft
@@ -44,7 +49,16 @@ sealed interface Screen {
     data object Send : Screen
     data object BackupCheck : Screen
     data object Settings : Screen
+    /** Speed up ([cancel] false) or cancel an unconfirmed send of this wallet by replacing it (RBF). */
+    data class Replace(val txid: String, val cancel: Boolean) : Screen
     data class ShowWords(val words: List<String>) : Screen
+    /** KILOJOIN: open pools, your rounds, and how it works. */
+    data object Pools : Screen
+    /** Open a pool of your own (with [Screen.PoolPay]'s payment when it comes from SEND). */
+    data object PoolCreate : Screen
+    data class PoolJoin(val poolId: String) : Screen
+    /** A payment from SEND, to be paid through a new pool: its recipients. */
+    data object PoolPay : Screen
 }
 
 sealed interface ScanPhase {
@@ -60,7 +74,8 @@ sealed interface SendPhase {
     data class Review(val draft: SendDraft, val concern: String?, val changeIndex: Int? = null) : SendPhase
     data object Signing : SendPhase
     data class Pending(val txid: String, val message: String) : SendPhase
-    data class Sent(val txid: String) : SendPhase
+    /** [replaced]/[cancelled]: it was a speed-up or a cancellation of an earlier send. */
+    data class Sent(val txid: String, val replaced: Boolean = false, val cancelled: Boolean = false) : SendPhase
     data class Failed(val message: String) : SendPhase
 }
 
@@ -97,8 +112,14 @@ data class UiState(
     val selectedCoins: Set<String>? = null,
     val coinPolicyError: String? = null,
     val message: String? = null,
+    /** The currency values are shown in ([Fiat.OFF]: none, and the price feed is never asked). */
+    val fiat: String = "USD",
+    val market: MarketData? = null,
 ) {
     val walletName: String get() = wallets.firstOrNull { it.id == walletId }?.name ?: "Wallet"
+    /** One XBT in [fiat], or null (off, or no price yet). */
+    val perCoin: Double? get() = if (fiat == Fiat.OFF) null else market?.xbtIn(fiat)
+
     val confirmed: Long get() = rows.sumOf { it.confirmed }
     val unconfirmed: Long get() = rows.sumOf { it.unconfirmed }
     val total: Long get() = confirmed + unconfirmed
@@ -123,7 +144,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     private var receiveSession: Pair<String, Int>? = null
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
-    fun close() { cancelAction(); scope.cancel() }
+    fun close() { cancelAction(); pools.detach(); scope.cancel() }
 
     private var scanJob: Job? = null
     private var sendJob: Job? = null
@@ -151,10 +172,35 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     }
 
 
+    /** Kilojoin: the pools and this wallet's rounds in them. */
+    val pools = PoolsModel(platform, { _state.value },
+        gatherCoins = {
+            val s = _state.value; val zpub = s.zpub ?: error("No wallet.")
+            require(pending(zpub) == null) { "Resolve the pending payment before joining a pool." }
+            eligibleCoins(scanner.gatherUtxos(s.rows.filter { it.isUsed }, s.endpoint, s.pinned), frozenStore.read(zpub), null)
+        },
+        verifyCoins = { coins ->
+            val s = _state.value; val zpub = s.zpub ?: error("No wallet.")
+            require(pending(zpub) == null) { "Resolve the pending payment before joining a pool." }
+            require(eligibleCoins(coins, frozenStore.read(zpub), null).size == coins.size) { "A selected pool coin is frozen." }
+            scanner.verifyCoins(zpub, coins, s.endpoint, s.pinned)
+        },
+        onRoundDone = { refresh() },
+        checkPolicy = { ids ->
+            val zpub = state.value.zpub ?: error("No wallet.")
+            require(pending(zpub) == null) { "Resolve the pending payment before using a pool." }
+            require(ids.none { it in frozenStore.read(zpub) }) { "A pool input is frozen. Nothing was signed." }
+        })
+
     private companion object {
         const val K_HIDE = "privacy.hideAmounts"
         const val K_HOST = "server.host"
         const val K_PORT = "server.port"
+        const val K_FIAT = "fiat"
+        const val K_MARKET = "market.json"
+        const val K_MARKET_AT = "market.fetched"
+        /** Screenshot mode's price: no network, the same figures every run. */
+        const val DEMO_MARKET = """{"xbtUsd":360.0,"xbtEur":321.5,"fiatPerUsd":{"EUR":0.893,"GBP":0.748,"JPY":156.8}}"""
         fun pinKey(e: NodeEndpoint) = "pin.${e.host}:${e.port}"
     }
 
@@ -172,26 +218,72 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             _state.value = UiState(screen = if (active == null) Screen.Welcome else Screen.Home,
                 wallets = saved.value.wallets, walletId = active?.id, kind = active?.kind, zpub = active?.zpub,
                 endpoint = endpoint, pinned = prefs.get(pinKey(endpoint)),
-                newWalletName = WalletCatalog.nextName(saved.value.wallets), hideAmounts = prefs.get(K_HIDE) == "true", amountUnit = savedUnit())
+                newWalletName = WalletCatalog.nextName(saved.value.wallets), hideAmounts = prefs.get(K_HIDE) == "true", amountUnit = savedUnit(),
+                fiat = prefs.get(K_FIAT) ?: "USD", market = prefs.get(K_MARKET)?.let { j -> runCatching { MarketFeed.parse(j, prefs.get(K_MARKET_AT)?.toLongOrNull() ?: 0L) }.getOrNull() })
             loadNotes()
             if (active != null) scan()
         } catch (e: Exception) {
             _state.value = UiState(endpoint = endpoint, pinned = prefs.get(pinKey(endpoint)),
                 message = "Could not open the wallet list. Existing data was not changed. ${e.message ?: ""}")
         }
+        refreshPrice()
+        if (platform.demoScreen == null) pools.attach()
+    }
+
+    // ------------------------------------------------------------------ price (Android 1.2.3: 36 currencies)
+
+    private var priceTriedMs = 0L
+
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    private fun nowMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
+
+    /**
+     * The XBT price from mempool.kilombino.com, at most once per the feed's poll interval (5 min),
+     * and after a failure not again for 10 minutes. Nothing is asked while prices are off. The
+     * request carries nothing about the wallet: it is the same for everyone.
+     */
+    fun refreshPrice(force: Boolean = false) {
+        val s = _state.value
+        if (s.fiat == Fiat.OFF) return
+        if (platform.demoScreen != null) {
+            _state.update { it.copy(market = MarketFeed.parse(DEMO_MARKET, 0L)) }
+            return
+        }
+        val now = nowMs()
+        val m = s.market
+        if (!force && m != null && now - m.fetchedMs < m.pollMinutes * 60_000L) return
+        if (now - priceTriedMs < (if (force) 60_000L else 10 * 60_000L)) return
+        priceTriedMs = now
+        scope.launch {
+            val body = suspendCancellableCoroutine<String?> { c -> platform.httpGet(MarketFeed.API) { c.resume(it) } } ?: return@launch
+            val parsed = runCatching { MarketFeed.parse(body, now) }.getOrNull() ?: return@launch
+            if (parsed.xbtUsd == null) return@launch
+            prefs.put(K_MARKET, body); prefs.put(K_MARKET_AT, now.toString())
+            _state.update { it.copy(market = parsed) }
+        }
+    }
+
+    /** [code]: a [Fiat] currency, or [Fiat.OFF]. One choice for the whole app. */
+    fun setFiat(code: String) {
+        prefs.put(K_FIAT, code)
+        _state.update { it.copy(fiat = code) }
+        refreshPrice()
     }
 
     private fun showCatalog(scanSelected: Boolean = true) {
         val saved = catalog?.value ?: return
+        pools.detach()
         cancelAction(); scanJob?.cancel(); walletEpoch++; receiveSession = null
         val active = saved.wallets.firstOrNull { it.id == saved.active }
         val previous = state.value
         _state.value = UiState(screen = if (active == null) Screen.Welcome else Screen.Home,
             wallets = saved.wallets, walletId = active?.id, kind = active?.kind, zpub = active?.zpub,
             endpoint = previous.endpoint, pinned = prefs.get(pinKey(previous.endpoint)),
-            newWalletName = WalletCatalog.nextName(saved.wallets), hideAmounts = prefs.get(K_HIDE) == "true", amountUnit = savedUnit())
+            newWalletName = WalletCatalog.nextName(saved.wallets), hideAmounts = prefs.get(K_HIDE) == "true", amountUnit = savedUnit(),
+                fiat = prefs.get(K_FIAT) ?: "USD", market = prefs.get(K_MARKET)?.let { j -> runCatching { MarketFeed.parse(j, prefs.get(K_MARKET_AT)?.toLongOrNull() ?: 0L) }.getOrNull() })
         loadNotes()
         if (scanSelected && active != null) scan()
+        if (platform.demoScreen == null) pools.attach()
     }
 
     private fun loadNotes() {
@@ -304,7 +396,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     private fun allowedCoins(s: UiState, coins: List<SpendableUtxo>): List<SpendableUtxo> {
         // Read durable policy every time, including the final signing boundary.
         val frozen = frozenStore.read(requireNotNull(s.zpub))
-        return eligibleCoins(coins, frozen, s.selectedCoins)
+        return eligibleCoins(coins, frozen, s.selectedCoins).filter { it.coinId() !in pools.lockedOutpoints() }
     }
 
     fun availableCoins(): List<SpendableUtxo> = runCatching {
@@ -346,7 +438,18 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         } catch (e: Exception) { exporting = false; say("Could not open the share sheet.") }
     }
 
+    private fun poolActionBlocked(): Boolean {
+        val active = pools.state.value
+        if (active.busy != null || active.rounds.any { it.phase != com.kilombino.kilowallet.core.kilojoin.PoolSession.Phase.ABORTED &&
+            it.phase != com.kilombino.kilowallet.core.kilojoin.PoolSession.Phase.CONFIRMED }) {
+            say("Finish or leave the active Kilojoin round before changing wallets, servers or making another payment.")
+            return true
+        }
+        return false
+    }
+
     fun selectWallet(id: String) {
+        if (poolActionBlocked()) return
         if (setupBusy || state.value.send is SendPhase.Signing) return
         runCatching { requireNotNull(catalog).select(id); showCatalog() }
             .onFailure { say(it.message ?: "Could not select wallet.") }
@@ -361,6 +464,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     }
 
     fun addWallet() {
+        if (poolActionBlocked()) return
         if (setupBusy || state.value.send is SendPhase.Signing) return
         if (catalog == null) { say("Wallet storage is unavailable. Restart the app before adding a wallet."); return }
         if (state.value.wallets.size >= WalletCatalog.LIMIT) { say("This device supports up to 20 wallets."); return }
@@ -373,6 +477,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     }
 
     fun go(screen: Screen) {
+        if ((screen in listOf(Screen.Wallets, Screen.Welcome, Screen.Restore, Screen.Watch, Screen.Send) ||
+            screen is Screen.Replace || screen is Screen.CreateShow || screen is Screen.CreateConfirm) && poolActionBlocked()) return
         if (setupBusy || _state.value.send is SendPhase.Signing) return
         cancelAction()
         if (screen in listOf(Screen.Wallets, Screen.Welcome, Screen.Restore, Screen.Watch) || screen is Screen.CreateShow || screen is Screen.CreateConfirm) {
@@ -382,12 +488,30 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         if (screen != Screen.Receive || state.value.screen != Screen.Receive) receiveSession = null
         _state.update { it.copy(screen = screen, message = null, checkingBackup = false, selectedCoins = if (screen == Screen.Send) it.selectedCoins else null) }
         if (screen == Screen.Send) openSend()
+        if (screen == Screen.Pools && platform.demoScreen == null) pools.attach()
+        if (screen is Screen.Replace) {
+            _state.update { it.copy(send = SendPhase.Editing) }
+            val s = _state.value
+            if (platform.demoScreen == null) scope.launch {
+                val rate = scanner.suggestedFeeRate(s.endpoint, s.pinned)
+                _state.update { it.copy(suggestedRate = rate) }
+            }
+        }
     }
 
     fun back() {
         val s = _state.value
-        go(if (s.kind == null) Screen.Welcome else Screen.Home)
+        go(when {
+            s.kind == null -> Screen.Welcome
+            s.screen == Screen.PoolCreate || s.screen is Screen.PoolJoin -> Screen.Pools
+            s.screen == Screen.PoolPay -> Screen.Send
+            else -> Screen.Home
+        })
     }
+
+    /** Screenshot mode (a throwaway demo wallet, nothing sent anywhere). */
+    val isDemo: Boolean get() = platform.demoScreen != null
+    val unlockName: String get() = platform.unlockName
 
     fun dismissMessage() = _state.update { it.copy(message = null) }
     private fun say(msg: String) = _state.update { it.copy(message = msg) }
@@ -453,11 +577,12 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         }
     }
 
-    fun watch(xpub: String) {
+    fun watch(xpub: String, type: ScriptType? = null) {
         if (setupBusy || state.value.send is SendPhase.Signing) return
         val saved = catalog ?: run { say("Wallet storage is unavailable. Restart the app."); return }
-        val key = xpub.trim()
-        val parsed = runCatching { Bip32.parseExtendedPubKey(key) }.getOrElse { say(it.message ?: "Not a valid key."); return }
+        val raw = xpub.filterNot { it.isWhitespace() }
+        val parsed = runCatching { Bip32.parseExtendedPubKey(raw) }.getOrElse { say(it.message ?: "Not a valid key."); return }
+        val key = if (parsed.scriptType == ScriptType.P2PKH && type != null && type != ScriptType.P2PKH) Bip32.withScriptType(raw, type) else raw
         runCatching {
             saved.addWatch(saved.candidate(state.value.newWalletName, WalletKind.WATCH, key))
             showCatalog()
@@ -466,6 +591,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     }
 
     fun deleteWallet() {
+        if (poolActionBlocked()) return
         if (setupBusy || state.value.send is SendPhase.Signing) return
         val s = state.value
         val id = s.walletId ?: WalletCatalog.LEGACY_ID
@@ -531,6 +657,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     }
                     is ScanEvent.Done -> {
                         pinIfFirst(s.endpoint, ev.fingerprint)
+                        if (!sameWallet(s)) return@collect
                         _state.update { it.copy(scan = ScanPhase.Done, rows = ev.rows, txs = ev.txs, height = ev.height, lastSyncedAt = platform.nowMillis()) }
                         if (platform.demoScreen == "home") platform.markReady("home")
                     }
@@ -538,7 +665,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     is ScanEvent.CertificateChanged -> _state.update { it.copy(scan = ScanPhase.Error(ev.message), certChanged = ev.fingerprint) }
                 }
             }
-            if (platform.demoScreen == "home" && _state.value.scan is ScanPhase.Error) platform.markReady("home")
+            if (platform.demoScreen?.substringBefore('@') == "home" && _state.value.scan is ScanPhase.Error) platform.markReady("home")
         }
     }
 
@@ -547,6 +674,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
      * screen) — so a payment to the next unused address is found too, not only to known ones.
      */
     fun refresh() {
+        refreshPrice()
         val s = _state.value
         if (s.scan is ScanPhase.Scanning || s.refreshing) return
         if (s.rows.isEmpty() && s.scan !is ScanPhase.Done) { scan(); return }
@@ -570,6 +698,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 when (ev) {
                     is ScanEvent.Done -> {
                         pinIfFirst(s.endpoint, ev.fingerprint)
+                        if (!sameWallet(s)) return@collect
                         _state.update { it.copy(rows = ev.rows, txs = ev.txs, height = ev.height, refreshing = false, scan = ScanPhase.Done, lastSyncedAt = platform.nowMillis()) }
                     }
                     is ScanEvent.Failed -> _state.update { it.copy(refreshing = false, scan = ScanPhase.Error(ev.message), message = ev.message) }
@@ -582,6 +711,10 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             if (scanEpoch == walletEpoch) _state.update { it.copy(refreshing = false) }
         }
     }
+
+    /** Whether the wallet and server on screen are still those of [started]. */
+    private fun sameWallet(started: UiState): Boolean =
+        _state.value.zpub == started.zpub && _state.value.endpoint == started.endpoint
 
     private fun pinIfFirst(endpoint: NodeEndpoint, fp: String?) {
         if (fp == null || prefs.get(pinKey(endpoint)) != null) return
@@ -602,6 +735,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     }
 
     fun setServer(host: String, port: Int?) {
+        if (poolActionBlocked()) return
         if (setupBusy || state.value.send is SendPhase.Signing) return
         cancelAction(); scanJob?.cancel(); walletEpoch++
         val e = if (host.isBlank() || port == null) NodeEndpoint.DEFAULT
@@ -627,6 +761,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             val parsed = Bip32.parseExtendedPubKey(zpub)
             val pub = Bip32.derivePath(parsed, 0, index).pubkey()
             val address = Address.encode(pub, parsed.scriptType)
+            require(Address.scriptPubKey(pub, parsed.scriptType).toList() !in pools.reservedScripts()) { "Address progress changed. Refresh and try again." }
             if (cached == null) {
                 if (reuseLatest) say("Showing your latest unused address. 20 unused addresses are already reserved; refresh after a payment to create another.")
                 else addresses.reserve(zpub, 0, index)
@@ -722,7 +857,10 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     prefs.put(pendingKey(zpub), signed.rawHex)
                     val txid = scanner.broadcast(signed.rawHex, s.endpoint, s.pinned)
                     prefs.put(pendingKey(zpub), null)
-                    if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Sent(txid)) }
+                    if (isCurrent(epoch, s)) {
+                        pools.leaveFor(draft.inputs.map { it.coinId() })
+                        _state.update { it.copy(send = SendPhase.Sent(txid, replaced = draft.replaces != null, cancelled = draft.cancels)) }
+                    }
                     refresh()
                 } catch (e: CancellationException) { throw e }
                   catch (e: Exception) {
@@ -756,6 +894,47 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         if (state.value.send is SendPhase.Signing) return
         cancelAction()
         _state.update { it.copy(send = SendPhase.Editing) }
+    }
+
+    // ------------------------------------------------------------------ speed up / cancel (RBF)
+
+    /** Open a pool for the payment typed in SEND (1 to 5 recipients). */
+    fun payThroughPool(recipients: List<Pair<String, Long>>, rate: Double) {
+        pools.startPayment(PoolPayRequest(recipients, rate))
+        go(Screen.PoolPay)
+    }
+
+    /**
+     * Draft a replacement of unconfirmed send [txid] (Android: `prepareBump` / `prepareCancel`):
+     * the same coins, at [rate] or the least the network takes for a replacement; a speed-up keeps
+     * the payment and takes the extra fee from the change, a cancellation sends everything back
+     * to a fresh address of this wallet. The review and the signing are a normal send's.
+     */
+    fun prepareReplace(txid: String, cancel: Boolean, rate: Double) {
+        val s = state.value
+        val zpub = s.zpub ?: return
+        if (s.kind != WalletKind.HOT || s.send !is SendPhase.Editing || pending(zpub) != null || poolActionBlocked()) return
+        cancelAction()
+        val epoch = actionEpoch
+        _state.update { it.copy(send = SendPhase.Preparing) }
+        sendJob = scope.launch {
+            try {
+                val (tx, coins) = scanner.replacementCoins(txid, s.rows, s.endpoint, s.pinned)
+                require(allowedCoins(s, coins).size == coins.size) { "A replacement input is frozen or reserved." }
+                addresses.observe(zpub, s.rows)
+                val index = addresses.next(zpub, 1)
+                val d = withContext(cryptoDispatcher) {
+                    if (cancel) ReplacePlanner.cancel(txid, tx, coins, SendPlanner.changeScript(zpub, index), rate)
+                    else ReplacePlanner.bump(txid, tx, coins, { spk ->
+                        Address.electrumScriptHash(spk) in s.rows.filter { it.chainIndex == 1 }.map { it.scriptHash }.toSet()
+                    }, rate)
+                }
+                scanner.verifyCoins(zpub, d.inputs, s.endpoint, s.pinned)
+                if (cancel) addresses.checkAvailable(zpub, 1, index)
+                if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Review(d, SendPlanner.feeConcern(d), index.takeIf { cancel })) }
+            } catch (e: CancellationException) { throw e }
+              catch (e: Exception) { if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Failed(e.message ?: "Could not prepare the replacement.")) } }
+        }
     }
 
     // ------------------------------------------------------------------ demo (CI screenshots only)
@@ -796,6 +975,10 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     "home" -> scan()
                     "receive", "request" -> { go(Screen.Receive); platform.markReady(screen) }
                     "settings" -> { go(Screen.Settings); platform.markReady(screen) }
+                    "replace" -> {
+                        // A made-up pending send, only so the cancel screen has something to show.
+                        go(Screen.Replace("4f".repeat(32), cancel = true)); platform.markReady(screen)
+                    }
                     "send" -> { go(Screen.Send); platform.markReady(screen) }
                     "backup" -> { go(Screen.BackupCheck); platform.markReady(screen) }
                     "recipients" -> {
@@ -810,6 +993,17 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         _state.update { it.copy(screen = Screen.Send, spendable = coins, frozenCoins = frozen, selectedCoins = setOf(coins.first().coinId())) }
                         platform.markReady(screen)
                     }
+                    "pools", "pool-round", "pool-intro" -> {
+                        withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }
+                        if (screen == "pool-intro") pools.setEnabled(false)
+                        go(Screen.Pools); platform.markReady(screen)
+                    }
+                    "pool-create" -> { withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }; go(Screen.PoolCreate); platform.markReady(screen) }
+                    "pool-join" -> {
+                        withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }
+                        pools.state.value.open?.firstOrNull()?.let { go(Screen.PoolJoin(it.id)) }; platform.markReady(screen)
+                    }
+                    "pool-pay" -> { withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }; go(Screen.PoolPay); platform.markReady(screen) }
                     "review" -> {
                         // A made-up coin, only so the review screen has something to show.
                         val coin = SpendableUtxo("4f".repeat(32), 0, 250_000, 0, 0, 970_000)
