@@ -25,7 +25,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Text
+import com.kilombino.kilowallet.app.i18n.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -85,6 +85,14 @@ fun SecondaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolea
     ) { Text(text.uppercase(), style = MaterialTheme.typography.labelLarge) }
 }
 
+/** A small selectable pill (Android: the settings screen's chips). */
+@Composable
+fun Chip(text: String, selected: Boolean, color: Color = Purple, onClick: () -> Unit) {
+    Text(text, style = MaterialTheme.typography.bodyMedium, color = if (selected) Ink else TextMain,
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (selected) color else PanelSoft)
+            .clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp))
+}
+
 @Composable
 fun LinkText(text: String, color: Color = TextSoft, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Text(text, style = MaterialTheme.typography.bodyMedium, color = color,
@@ -94,10 +102,10 @@ fun LinkText(text: String, color: Color = TextSoft, modifier: Modifier = Modifie
 @Composable
 fun Field(
     value: String, onChange: (String) -> Unit, label: String, modifier: Modifier = Modifier,
-    keyboard: KeyboardType = KeyboardType.Text, singleLine: Boolean = true, minLines: Int = 1, secret: Boolean = false,
+    keyboard: KeyboardType = KeyboardType.Text, singleLine: Boolean = true, minLines: Int = 1, secret: Boolean = false, enabled: Boolean = true,
 ) {
     OutlinedTextField(
-        value = value, onValueChange = onChange, modifier = modifier.fillMaxWidth(),
+        value = value, onValueChange = onChange, modifier = modifier.fillMaxWidth(), enabled = enabled,
         label = { Text(label, style = MaterialTheme.typography.bodySmall) },
         singleLine = singleLine, minLines = minLines,
         visualTransformation = if (secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,

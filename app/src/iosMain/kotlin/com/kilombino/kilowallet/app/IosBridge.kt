@@ -29,8 +29,32 @@ interface IosBridge {
     fun sharePayment(request: String, completion: (String?) -> Unit)
     fun shareCsv(fileName: String, contents: String, completion: (String?) -> Unit)
     fun appVersion(): String
+    /** HTTPS GET: the body of a 200 answer, or null. Called back on any thread. */
+    fun httpGet(url: String, completion: (String?) -> Unit)
     /** CI screenshot mode only: write a marker file so the workflow knows the screen settled. */
     fun markReady(name: String)
+
+    /**
+     * Open a WebSocket to the pools' nostr relay (URLSessionWebSocketTask; wss only, the system's
+     * certificate checks). Blocks until it is open or failed: check [IosSocket.error]. Never on the main thread.
+     */
+    fun openWebSocket(url: String, listener: IosSocketListener): IosSocket
+}
+
+/** What a WebSocket tells the shared code; called on any thread. */
+interface IosSocketListener {
+    fun onText(text: String)
+    fun onPong()
+    fun onClosed(error: String?)
+}
+
+interface IosSocket {
+    /** Non-null when the socket could not be opened. */
+    fun error(): String?
+    /** Sends a text frame (blocking until it is written); false when the socket is gone. */
+    fun send(text: String): Boolean
+    fun ping(): Boolean
+    fun close()
 }
 
 interface IosConnection {
