@@ -675,6 +675,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
      */
     fun refresh() {
         refreshPrice()
+        // Preview screens must not start live scans while their synthetic pool state is prepared.
+        if (isDemo) return
         val s = _state.value
         if (s.scan is ScanPhase.Scanning || s.refreshing) return
         if (s.rows.isEmpty() && s.scan !is ScanPhase.Done) { scan(); return }

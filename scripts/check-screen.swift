@@ -33,6 +33,10 @@ do {
         line.sorted(by: { $0.boundingBox.minX < $1.boundingBox.minX })
             .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }.joined(separator: "\n"))
+    guard !text.contains("trust this server certificate") else {
+        FileHandle.standardError.write(Data("Unexpected certificate prompt obscures the target screen.\n".utf8))
+        exit(1)
+    }
     let alternatives = observations.flatMap { $0.topCandidates(3).map { normalized($0.string) } }
     guard text.contains(expected) || spatialText.contains(expected) || alternatives.contains(where: { $0.contains(expected) }) else {
         FileHandle.standardError.write(Data("Expected screen text not visible.\n".utf8))

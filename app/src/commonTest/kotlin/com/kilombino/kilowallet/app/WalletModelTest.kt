@@ -91,8 +91,19 @@ class WalletModelTest {
         override fun qrImage(text: String): ImageBitmap? = null
         override val canScanQr = false
         override fun scanQr(done: (String?) -> Unit) = done(null)
-        override val demoScreen: String? = null
+        override var demoScreen: String? = null
         override val appVersion = "test"
+    }
+
+    @Test fun poolDemoDoesNotStartLiveWalletRefresh() = checkModel { model, platform ->
+        platform.demoScreen = "pool-intro"
+        model.setUpDemo("receive")
+        advanceUntilIdle()
+        model.refresh()
+        advanceUntilIdle()
+        assertEquals(0, platform.connections)
+        assertNull(model.state.value.certChanged)
+        assertEquals(0, platform.loadCalls)
     }
 
     private fun checkModel(block: suspend TestScope.(WalletModel, FakePlatform) -> Unit) = runTest {
