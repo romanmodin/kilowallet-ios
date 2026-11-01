@@ -10,7 +10,7 @@ Recovery words are brought into memory when you choose to reveal them, sign, or 
 
 ## Electrum servers and public transactions
 
-The app connects to your selected Electrum server over TLS. The bundled default is `fulcrum.kilombino.com:17717`. That server receives your network address, queried address script hashes and wallet-history requests, and any transaction you submit. These queries can be linked to your wallet. The server is operated separately from this distribution; its logging and retention have not been verified here. You can choose your own compatible server in Settings.
+The app connects to your selected Electrum server over TLS. The bundled default is `fulcrum.kilombino.com:17717`. That server receives your network address, queried address script hashes and wallet-history requests, and any transaction you submit. These queries can be linked to your wallet. The server is operated separately from this distribution; the operator reports that neither the server nor its proxy logs client IP addresses. Queries are not stored in normal operation. Failed requests may leave a queried script hash in a debug log without an IP address; these logs are wiped daily. You can choose your own compatible server in Settings.
 
 Transactions broadcast to the network can become public blockchain records. Removing a wallet from the app does not erase blockchain records or data previously received by a server.
 
@@ -20,7 +20,11 @@ When you use pool discovery or participation, the wallet connects to `wss://rela
 
 ## Optional exchange rates
 
-If you enable fiat prices, the app requests a public market-price feed from `mempool.kilombino.com` to estimate the value displayed for your balance. The server receives your network address when the request is made. Turning fiat display off stops these price requests. The distribution maintainer has not verified the independent relay or price server's logging or retention periods.
+If you enable fiat prices, the app requests a public market-price feed from `mempool.kilombino.com` to estimate the value displayed for your balance. The server receives your network address when the request is made. Turning fiat display off stops these price requests. The price-feed operator reports that its origin keeps no access logs.
+
+## Service retention and infrastructure
+
+The relay operator reports that it does not log client IP addresses. It retains encrypted round coordination messages for up to seven days, then deletes them automatically. Per-pool keys and blinded outputs limit linkage. This does not make blockchain transactions anonymous. Cloudflare processes connection data for relay and price-feed traffic under its own privacy policy; the operator reports it cannot access Cloudflare's logs. The operator reports no tracking, profiling, advertising or data sales and says legacy system logs from earlier configurations expire within a few weeks. These statements describe the default services, not a custom server you choose.
 
 ## Contact
 
