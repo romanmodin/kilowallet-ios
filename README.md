@@ -7,14 +7,14 @@ Created by **Kilombino**. This distribution is maintained by [romanmodin](https:
 A self-custodial wallet for Bitcoin on the BLAKE2b proof-of-work chain (BTC / XBT), for iPhone.
 The iOS sibling of [Kilowallet for Android](https://github.com/Kilombino/kilowallet).
 
-This candidate merges upstream iOS v0.4.0 (7321416d60672c081191c7d4113e29fae935fb1f)
-into publisher a9e56783d896ae72e263ec53fe644797ad433791. It retains the existing multiwallet
+This candidate merges upstream iOS v0.4.1 (5ab9f2ec3409ce2e7cf797a2fbafc59dc3986976)
+into publisher c480edaa8933a34f24d7a6b8a3773114dcfc0255. It retains the existing multiwallet
 catalogue and per-wallet Keychain accounts, frozen/manual coin policy, pending-payment journal,
 explicit certificate approval and header checks. Pool authentication is bound to the selected wallet;
 pool addresses share the durable address book. Existing unresolved pool sessions block wallet/server
 changes. The author’s unsigned single-wallet IPA is not an in-place upgrade for this fork.
 
-Version 0.4 (BTC only):
+Version 0.4.1 (BLAKE2b chain only):
 
 - Create a wallet (12 or 24 words; the words are shown and then checked), restore from words
   (12, 15, 18, 21 or 24 English BIP-39 words; first BIP-84 account only, optional passphrase), or watch-only from a zpub (also ypub / xpub).
@@ -61,9 +61,17 @@ Version 0.4 (BTC only):
   wallet's fresh addresses, or to a watch-only key's (a zpub) when one is set. No server holds or
   can move any coin; there is no fee for it; the messages go over nostr
   (`relay.kilombino.com`), encrypted. Kilojoin protocol v1 to v5, byte for byte as Kilowallet for
-  Android 1.3.0 and for desktop: the same pools, with the same people. Native SegWit (bc1q) pools
+  Android 1.3.9 and for desktop: the same pools, with the same people. Native SegWit (bc1q) pools
   only. iOS keeps no app running in the background: rounds run while the app is open, and for the
   short time iOS allows after leaving it; the screen says so.
+
+New in 0.4.1 (ported from Kilowallet for Android up to 1.3.9): a round whose vote ends by its deadline
+no longer times out (the creator closes each vote once; a member waiting for its blind signature
+follows a later closing from a creator on an older version), a round closes again without a seat
+asleep at closing (both as creator and as member), a seat whose coin is spent after joining is taken
+out by the creator and a member gives the creator ten minutes to do so before leaving, a coin can
+take its lost seat back, the pool list only asks the relay for the last 70 minutes (much quicker),
+and the language tables of Android 1.3.9.
 
 New in 0.4 (ported from Kilowallet for Android 1.3.0): Kilojoin (pools, payments through a pool,
 Kilojoin v1 to v5), the language tables of Android 1.3.0, and receive and change addresses that a
@@ -114,7 +122,7 @@ Kotlin code is built by Gradle from Xcode's "Compile Kotlin Framework" build pha
 3. Select the **iosApp** target → **Signing & Capabilities**: choose your **Team**, and set the
    **Bundle Identifier** (suggested: `com.kilombino.kilowallet`). The same two values can instead
    be set once in `iosApp/Configuration/Config.xcconfig` (`TEAM_ID`, `BUNDLE_ID`). The version is
-   `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in that file (0.4.0 / 4); raise the build
+   `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in that file (0.4.1 / 5); raise the build
    number for every upload.
 
 4. Try it: pick an iPhone simulator or a connected iPhone and press Run. In the Simulator, enable
@@ -200,7 +208,7 @@ file says which Android file it comes from):
 | `wallet/Scanner, Send` | `data/Scanner`, `ui/WalletViewModel` (prepareSend, verifyCoins, confirmSend, fees, dustFor) |
 | `wallet/Replace` | `ui/WalletViewModel` (prepareBump, prepareCancel) |
 | `market/Fiat` | `data/Fiat`, `data/MarketFeed` (the price and the exchange rates only) |
-| `kilojoin/Protocol, PoolTx, PoolSession, BlindRsa, NostrEvent, Nip44, Relay, PoolPayment` | `coinjoin/Protocol, CoinjoinTx, PoolSession, BlindRsa, NostrEvent, Nip44, RelayClient, CoinjoinPayment, MixedCoins, Destination` (1.3.0, [`6bb1bb0`](https://github.com/Kilombino/kilowallet/commit/6bb1bb0681a28a1e81be766e4be86e4d20f654ab)) — coroutines instead of threads, `BigNat` instead of `BigInteger` |
+| `kilojoin/Protocol, PoolTx, PoolSession, BlindRsa, NostrEvent, Nip44, Relay, PoolPayment` | `coinjoin/Protocol, CoinjoinTx, PoolSession, BlindRsa, NostrEvent, Nip44, RelayClient, CoinjoinPayment, MixedCoins, Destination` (1.3.9, [`2989247`](https://github.com/Kilombino/kilowallet/commit/2989247dd55f17f0a8be6d9e8a284d3a4ad1d3c8)) — coroutines instead of threads, `BigNat` instead of `BigInteger` |
 | `app/…/Pools.kt`, `app/…/ui/Pools.kt` | `coinjoin/CoinjoinHub`, `ui/CoinjoinScreen` — without the background service, the alerts and the lock-screen cards |
 | `app/…/i18n/I18n, Text` + `composeResources/files/i18n/*.json` | `ui/i18n/I18n, Text` + `assets/i18n/*.json` (copied by `scripts/sync-i18n.py`) |
 
