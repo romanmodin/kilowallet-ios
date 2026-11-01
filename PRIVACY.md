@@ -1,6 +1,6 @@
 # Kilowallet privacy information
 
-Draft for this iOS distribution, 2026-10-11. Original creator: **Kilombino**. Distribution maintained by romanmodin.
+Privacy policy for Kilowallet for iPhone, version 0.4.0. Updated November 1, 2026. Original creator: **Kilombino**. Distribution maintained by romanmodin.
 
 ## Data on your iPhone
 
@@ -13,6 +13,18 @@ Recovery words are brought into memory when you choose to reveal them, sign, or 
 The app connects to your selected Electrum server over TLS. The bundled default is `fulcrum.kilombino.com:17717`. That server receives your network address, queried address script hashes and wallet-history requests, and any transaction you submit. These queries can be linked to your wallet. The server is operated separately from this distribution; its logging and retention have not been verified here. You can choose your own compatible server in Settings.
 
 Transactions broadcast to the network can become public blockchain records. Removing a wallet from the app does not erase blockchain records or data previously received by a server.
+
+## Kilojoin pools
+
+When you use pool discovery or participation, the wallet connects to `wss://relay.kilombino.com`. The relay can see your network address, connection times and public pool announcements. During participation, encrypted protocol messages pass through the relay. Encryption does not hide network metadata or prevent participants from observing information needed to construct and verify the joint transaction. A broadcast transaction can become a permanent public record. CoinJoin does not guarantee anonymity.
+
+## Optional exchange rates
+
+If you enable fiat prices, the app requests a public market-price feed from `mempool.kilombino.com` to estimate the value displayed for your balance. The server receives your network address when the request is made. Turning fiat display off stops these price requests. The distribution maintainer has not verified the independent relay or price server's logging or retention periods.
+
+## Contact
+
+For privacy questions about this distribution, use the project support page at https://github.com/romanmodin/kilowallet-ios/issues. Issues are public: never post recovery words, private keys, wallet addresses, transaction history or identifying details.
 
 ## Camera, clipboard and external links
 
