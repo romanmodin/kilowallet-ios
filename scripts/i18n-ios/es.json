@@ -102,7 +102,6 @@
   "New wallet · 24 words": "Monedero nuevo · 24 palabras",
   "Paste an extended PUBLIC key (zpub, also ypub/xpub) to watch balances without any way to spend. Careful: it reveals every address you will ever use — keep it like a bank statement.": "Pega una clave PÚBLICA extendida (zpub, también ypub/xpub) para ver saldos sin ninguna forma de gastar. Cuidado: revela todas las direcciones que usarás — guárdala como un extracto bancario.",
   "Watch a zpub": "Ver una zpub",
-  "BTC here is Bitcoin on the BLAKE2b proof-of-work chain (XBT): same addresses and history as Bitcoin up to block 961 640, a different proof of work after it.": "Aquí BTC es Bitcoin en la cadena con prueba de trabajo BLAKE2b (XBT): mismas direcciones e historial que Bitcoin hasta el bloque 961 640, otra prueba de trabajo después.",
   "Your recovery words": "Tus palabras de recuperación",
   "Write these {0} words on paper, in order. They ARE your wallet: anyone with them can take your coins, and without them a lost phone means lost coins. Never type them into a website, never photograph them.": "Escribe estas {0} palabras en papel, en orden. SON tu monedero: quien las tenga puede llevarse tus monedas, y sin ellas un teléfono perdido son monedas perdidas. Nunca las escribas en una web, nunca les hagas una foto.",
   "I wrote them down": "Las he apuntado",
@@ -507,5 +506,8 @@
   "{0}: verify this fingerprint with the server operator using a separate trusted channel. No wallet queries have been sent. A wrong fingerprint could expose your addresses and allow false balance information.": "{0}: comprueba esta huella con el operador del servidor por un canal independiente de confianza. No se han enviado consultas del monedero. Una huella incorrecta podría revelar tus direcciones y permitir información falsa del saldo.",
   "Receive XBT": "Recibir XBT",
   "Your XBT": "Tus XBT",
-  "Send XBT": "Enviar XBT"
+  "Send XBT": "Enviar XBT",
+  "BTC here is Bitcoin on the BLAKE2b proof-of-work chain: same addresses and history as Bitcoin up to block 961 640, a different proof of work after it.": "Aquí BTC es Bitcoin en la cadena con prueba de trabajo BLAKE2b: mismas direcciones e historial que Bitcoin hasta el bloque 961 640, otra prueba de trabajo después.",
+  "the round closed with a seat whose coin is not real or could not be checked": "la ronda se cerró con un asiento cuya moneda no es real o no se pudo comprobar",
+  "coin spent at closing": "moneda gastada al cerrar"
 }
