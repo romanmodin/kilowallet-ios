@@ -32,14 +32,14 @@ enum ArkEngine {
 /// renew coins when the app opens. They are Ark's own words, made from the wallet's: they open Ark
 /// only, never the on-chain coins (Android keeps them under a Keystore key with no fingerprint).
 enum ArkWords {
-    private static let query: [String: Any] = [
+    private static func query(_ owner: String) -> [String: Any] { [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: "com.kilombino.kilowallet.ark-words",
-        kSecAttrAccount as String: "ark-0",
-    ]
+        kSecAttrAccount as String: owner,
+    ] }
 
-    static func load() -> String? {
-        var q = query
+    static func load(_ owner: String) -> String? {
+        var q = query(owner)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
@@ -47,16 +47,19 @@ enum ArkWords {
         return String(data: d, encoding: .utf8)
     }
 
-    static func save(_ text: String) -> String? {
-        delete()
-        var q = query
+    static func save(_ owner: String, _ text: String) -> String? {
+        var q = query(owner)
         q[kSecValueData as String] = Data(text.utf8)
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let change = [kSecValueData as String: Data(text.utf8)] as CFDictionary
+        let updated = SecItemUpdate(query(owner) as CFDictionary, change)
+        if updated == errSecSuccess { return nil }
+        guard updated == errSecItemNotFound else { return "Keychain update error \(updated)" }
         let status = SecItemAdd(q as CFDictionary, nil)
         return status == errSecSuccess ? nil : "Keychain error \(status)"
     }
 
-    static func delete() { SecItemDelete(query as CFDictionary) }
+    static func delete(_ owner: String) { SecItemDelete(query(owner) as CFDictionary) }
 }
 
 /// The reminder before an Ark coin expires (a local notification) and iOS's background run to renew

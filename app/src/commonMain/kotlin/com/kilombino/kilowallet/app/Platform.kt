@@ -74,7 +74,19 @@ interface ArkPlatform {
     fun scheduleBackgroundRenewal() {}
 }
 
+internal class EngineLease {
+    private val owner = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    fun permits(id: String) = owner.value.let { it == null || it == id }
+    fun claim(id: String) = owner.compareAndSet(null, id) || owner.value == id
+}
+internal val nativeEngineLease = EngineLease()
+internal class EnginePrefs(private val base: Prefs, private val id: String) : Prefs {
+    init { require(id == WalletCatalog.LEGACY_ID || id.matches(Regex("wallet-[a-f0-9]{64}")) || id == "demo") }
+    override fun get(key: String) = base.get("engine.$id.$key")
+    override fun put(key: String, value: String?) = base.put("engine.$id.$key", value)
+}
 interface AppPlatform {
+    fun forEngineWallet(id: String): AppPlatform = this
     val seeds: SeedStore
     val prefs: Prefs
     val transports: TransportFactory

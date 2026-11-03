@@ -61,6 +61,7 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun ArkTab(model: WalletModel, state: UiState, platform: AppPlatform) {
+    if (!model.engineAccess()) { Explain("Reopen Kilowallet with this wallet selected to use its node."); return }
     val ark = model.ark
     val view by ark.view.collectAsState()
     val fig by ark.figures.collectAsState()

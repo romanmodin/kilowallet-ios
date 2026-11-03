@@ -215,11 +215,11 @@ final class Bridge: NSObject, IosBridge {
         return url.path
     }
 
-    func lndPasswordLoad() -> String? { LndPassword.load() }
+    func lndPasswordLoad(owner: String) -> String? { LndPassword.load(owner) }
 
-    func lndPasswordSave(hex: String) -> String? { LndPassword.save(hex) }
+    func lndPasswordSave(owner: String, hex: String) -> String? { LndPassword.save(owner, hex) }
 
-    func lndPasswordDelete() { LndPassword.delete() }
+    func lndPasswordDelete(owner: String) { LndPassword.delete(owner) }
 
     /// One HTTPS request (the LSP, the explorer), blocking the calling (background) thread: no
     /// cookies, no cache, a 30 s timeout. Status 0 with the error when there was no answer.
@@ -315,9 +315,9 @@ final class Bridge: NSObject, IosBridge {
         return url.path
     }
 
-    func arkWordsLoad() -> String? { ArkWords.load() }
-    func arkWordsSave(text: String) -> String? { ArkWords.save(text) }
-    func arkWordsDelete() { ArkWords.delete() }
+    func arkWordsLoad(owner: String) -> String? { ArkWords.load(owner) }
+    func arkWordsSave(owner: String, text: String) -> String? { ArkWords.save(owner, text) }
+    func arkWordsDelete(owner: String) { ArkWords.delete(owner) }
 
     /// The engine on 127.0.0.1 (plain http, nothing else), or the chain source over https.
     func arkHttp(method: String, url: String, body: String?, bearer: String?, timeoutMs: Int32) -> IosHttpResult {

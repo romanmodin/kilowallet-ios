@@ -94,7 +94,7 @@ sealed interface SendPhase {
      * Watch-only: the transaction waits for a signer elsewhere (SeedSigner, Sparrow…). [exported] is
      * the PSBT handed out, kept to check that what comes back is the very same transaction.
      */
-    class Psbt(val draft: SendDraft, val exported: ByteArray, val coins: List<com.kilombino.kilowallet.core.crypto.Psbt.Coin>) : SendPhase
+    class Psbt(val draft: SendDraft, val exported: ByteArray, val coins: List<com.kilombino.kilowallet.core.crypto.Psbt.Coin>, val changeIndex: Int? = null) : SendPhase
     /** [replaced]/[cancelled]: it was a speed-up or a cancellation of an earlier send. */
     data class Sent(val txid: String, val replaced: Boolean = false, val cancelled: Boolean = false) : SendPhase
     data class Failed(val message: String) : SendPhase
@@ -310,8 +310,32 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     }
 
     /** Lightning: the node on this phone (LND linked in), ported from Android's ln/Lightning.kt. */
-    val lightning = LightningModel(platform)
-    val ark = ArkModel(platform, ::authenticateWallet)
+    private val offlinePlatform = object : AppPlatform by platform {
+        override val lightning: LightningPlatform? = null
+        override val ark: ArkPlatform? = null
+        override val prefs = object : Prefs {
+            override fun get(key: String): String? = null
+            override fun put(key: String, value: String?) {}
+        }
+    }
+    private val offlineModels by lazy { LightningModel(offlinePlatform) to ArkModel(offlinePlatform, ::authenticateWallet) }
+    private var engineModels: Pair<LightningModel, ArkModel>? = null
+    private var modelsId: String? = null
+    private fun engineId(): String? = if (platform.demoScreen != null) "demo"
+        else state.value.takeIf { it.kind == WalletKind.HOT }?.zpub?.let(WalletCatalog::idFor)
+    internal fun engineAccess() = engineId()?.let(nativeEngineLease::permits) == true
+    private fun currentEngines(): Pair<LightningModel, ArkModel> {
+        val id = engineId() ?: return offlineModels
+        if (!nativeEngineLease.claim(id)) return offlineModels
+        if (modelsId == id) engineModels?.let { return it }
+        val scoped = platform.forEngineWallet(id)
+        return (LightningModel(scoped) to ArkModel(scoped, ::authenticateWallet)).also {
+            modelsId = id; engineModels = it
+        }
+    }
+    val lightning get() = currentEngines().first
+    val ark get() = currentEngines().second
+
 
     private companion object {
         const val K_HIDE = "privacy.hideAmounts"
@@ -386,15 +410,18 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
      * them and they never reach it otherwise.
      */
     fun enableLightning() {
-        if (!lightning.available) { say("This build has no Lightning engine."); return }
+        val target = lightning
+        val started = state.value
+        if (!target.available) { say("This build has no Lightning engine."); return }
         loadCurrentWords(I18n.tr("Turn on Lightning")) load@{ secret, error ->
             if (secret == null) { say(error ?: "Not unlocked: Lightning stays off."); return@load }
             scope.launch {
                 runCatching {
                     val (words, pass) = decodeSecret(secret)
                     val seed = withContext(Dispatchers.Default) { Bip39.toSeed(words, pass) }
-                    lightning.chainTip = _state.value.height
-                    withContext(Dispatchers.Default) { lightning.enable(seed) }
+                    if (!sameWallet(started)) { seed.fill(0); return@runCatching }
+                    target.chainTip = started.height
+                    withContext(Dispatchers.Default) { try { target.enable(seed) } finally { seed.fill(0) } }
                 }.onFailure { say(it.message ?: "Lightning did not start.") }
             }
         }
@@ -847,6 +874,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         if (s.kind == WalletKind.HOT) platform.seeds.delete(id)?.let { say("Could not remove the wallet: $it"); return }
         runCatching {
             requireNotNull(catalog).remove(id)
+            BalanceWatch.forget(prefs, id)
             val cleared = runCatching { s.zpub?.let { transactionNotes.clear(it); frozenStore.clear(it); recipientsStore.clear(it); prefs.put(backupKey(it), null) } }
             showCatalog()
             if (cleared.isFailure) say("Wallet removed, but some local annotations or settings could not be cleared.")
@@ -916,7 +944,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 knownChangeCount = progress.change).collect { ev ->
                 if (scanEpoch != walletEpoch) return@collect
                 if (ev is ScanEvent.Found) {
-                    runCatching { addresses.observe(zpub, listOf(ev.row)) }.exceptionOrNull()?.let { error ->
+                    runCatching { addresses.observe(if (ev.row.type == ScriptType.P2TR) s.activeTaproot ?: zpub else zpub, listOf(ev.row)) }.exceptionOrNull()?.let { error ->
                         _state.update { it.copy(scan = ScanPhase.Error(error.message ?: "Could not save address progress"), refreshing = false) }
                         throw CancellationException("Address progress could not be saved")
                     }
@@ -936,6 +964,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         pinIfFirst(s.endpoint, ev.fingerprint)
                         if (!sameWallet(s)) return@collect
                         _state.update { it.copy(scan = ScanPhase.Done, rows = ev.rows, txs = ev.txs, height = ev.height, lastSyncedAt = platform.nowMillis()) }
+                        s.walletId?.let { BalanceWatch.remember(prefs, it, ev.rows) }
                         platform.demoScreen?.substringBefore('@')?.takeIf { it == "home" || it == "simple" || it == "immature" }?.let { platform.markReady(it) }
                     }
                     is ScanEvent.Failed -> _state.update { it.copy(scan = ScanPhase.Error(ev.message)) }
@@ -969,7 +998,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 knownChangeCount = progress.change).collect { ev ->
                 if (scanEpoch != walletEpoch) return@collect
                 if (ev is ScanEvent.Found) {
-                    runCatching { addresses.observe(zpub, listOf(ev.row)) }.exceptionOrNull()?.let { error ->
+                    runCatching { addresses.observe(if (ev.row.type == ScriptType.P2TR) s.activeTaproot ?: zpub else zpub, listOf(ev.row)) }.exceptionOrNull()?.let { error ->
                         _state.update { it.copy(scan = ScanPhase.Error(error.message ?: "Could not save address progress"), refreshing = false) }
                         throw CancellationException("Address progress could not be saved")
                     }
@@ -979,6 +1008,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         pinIfFirst(s.endpoint, ev.fingerprint)
                         if (!sameWallet(s)) return@collect
                         _state.update { it.copy(rows = ev.rows, txs = ev.txs, height = ev.height, refreshing = false, scan = ScanPhase.Done, lastSyncedAt = platform.nowMillis()) }
+                        s.walletId?.let { BalanceWatch.remember(prefs, it, ev.rows) }
                     }
                     is ScanEvent.Failed -> _state.update { it.copy(refreshing = false, scan = ScanPhase.Error(ev.message), message = ev.message) }
                     is ScanEvent.CertificateChanged -> _state.update {
@@ -1019,8 +1049,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
      */
     fun setWatchNotify(on: Boolean) {
         prefs.put(BalanceWatch.KEY_ON, if (on) "1" else null)
-        if (on) _state.value.kind?.let { BalanceWatch.remember(prefs, it.name, _state.value.rows) }
-        else { BalanceWatch.forget(prefs, "HOT"); BalanceWatch.forget(prefs, "WATCH") }
+        if (on) _state.value.kind?.let { state.value.walletId?.let { id -> BalanceWatch.remember(prefs, id, _state.value.rows) } }
+        else state.value.wallets.forEach { BalanceWatch.forget(prefs, it.id) }
         platform.scheduleBalanceWatch(on)
     }
     fun watchNotify(): Boolean = BalanceWatch.enabled(prefs)
@@ -1053,6 +1083,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     // ------------------------------------------------------------------ receive
 
     /** The account new addresses come from: the Taproot one when the hot wallet hands out bc1p. */
+    private fun receivingKey(s: UiState): String = requireNotNull(if (receivesTaproot(s)) s.activeTaproot else s.zpub)
+    private fun changeScript(s: UiState, index: Int) = SendPlanner.changeScript(receivingKey(s), index, if (receivesTaproot(s)) ScriptType.P2TR else s.keyType)
     private fun receivesTaproot(s: UiState = _state.value) = s.kind == WalletKind.HOT && s.receiveTaproot && s.taprootXpub != null
 
     /** Rows of the receiving account (the BIP-86 one when Taproot is on, else the wallet's own). */
@@ -1111,20 +1143,20 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     fun prepareSend(to: String, amountSats: Long, rate: Double, sendAll: Boolean) {
         val s = _state.value
         val zpub = s.zpub ?: return
-        if (s.send !is SendPhase.Editing || s.kind != WalletKind.HOT || pending(zpub) != null) return
+        if (s.send !is SendPhase.Editing || s.kind == null || (s.kind == WalletKind.WATCH && s.scriptType == ScriptType.P2PKH) || pending(zpub) != null) return
         cancelAction()
         val epoch = actionEpoch
         _state.update { it.copy(send = SendPhase.Preparing) }
         sendJob = scope.launch {
             runCatching {
-                val utxos = allowedCoins(s, s.spendable ?: scanner.gatherUtxos(s.rows.filter { it.isUsed }, s.endpoint, s.pinned))
-                addresses.observe(zpub, s.rows)
-                val changeIndex = addresses.next(zpub, 1)
+                val utxos = allowedCoins(s, s.spendable ?: scanner.gatherUtxos(s.rows.filter { it.isUsed }, s.endpoint, s.pinned)).map { if (s.kind == WalletKind.WATCH) it.copy(type = s.scriptType) else it }
+                addresses.observe(receivingKey(s), receiveRows(s))
+                val changeIndex = addresses.next(receivingKey(s), 1)
                 val draft = withContext(cryptoDispatcher) {
-                    SendPlanner.plan(to, amountSats, rate, utxos, SendPlanner.changeScript(zpub, changeIndex), sendAll, useAllInputs = s.selectedCoins != null)
+                    SendPlanner.plan(to, amountSats, rate, utxos, changeScript(s, changeIndex), sendAll, useAllInputs = s.selectedCoins != null)
                 }
                 scanner.verifyCoins(zpub, draft.inputs, s.endpoint, s.pinned, s.keyType, s.activeTaproot)
-                if (draft.change > 0) addresses.checkAvailable(zpub, 1, changeIndex)
+                if (draft.change > 0) addresses.checkAvailable(receivingKey(s), 1, changeIndex)
                 draft to changeIndex.takeIf { draft.change > 0 }
             }.onSuccess { (d, index) -> if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Review(d, SendPlanner.feeConcern(d), index)) } }
              .onFailure { e -> if (e is CancellationException) throw e; if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Failed(e.message ?: "Could not prepare the send.")) } }
@@ -1145,8 +1177,10 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
      */
     fun exportPsbt() {
         val s = _state.value
-        val draft = (s.send as? SendPhase.Review)?.draft ?: return
+        val review = s.send as? SendPhase.Review ?: return
+        val draft = review.draft
         val key = s.zpub ?: return
+        if (s.kind != WalletKind.WATCH || pending(key) != null) return
         runCatching {
             val acct = Bip32.parseExtendedPubKey(key).let { p -> s.keyType?.let { p.withType(it) } ?: p }
             val type = acct.scriptType
@@ -1163,7 +1197,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     Address.scriptPubKey(Bip32.derivePath(acct, 1, i).pubkey(), type).contentEquals(o.scriptPubKey)
                 }?.let { i -> n to com.kilombino.kilowallet.core.crypto.Psbt.Change(Bip32.derivePath(acct, 1, i).pubkey(), type, origin?.child(1, i)) }
             }.toMap()
-            SendPhase.Psbt(draft, com.kilombino.kilowallet.core.crypto.Psbt.create(coins, draft.outputs, change), coins)
+            SendPhase.Psbt(draft, com.kilombino.kilowallet.core.crypto.Psbt.create(coins, draft.outputs, change), coins, review.changeIndex)
         }.onSuccess { p -> _state.update { it.copy(send = p) } }
          .onFailure { e -> _state.update { it.copy(send = SendPhase.Failed(e.message ?: "Could not make the PSBT.")) } }
     }
@@ -1176,15 +1210,25 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     fun finishPsbt(returned: ByteArray) {
         val s = _state.value
         val p = s.send as? SendPhase.Psbt ?: return
+        val zpub = s.zpub ?: return
+        if (s.kind != WalletKind.WATCH || pending(zpub) != null) return
+        cancelAction()
+        val epoch = actionEpoch
         _state.update { it.copy(send = SendPhase.Signing) }
-        scope.launch {
-            runCatching {
-                val tx = withContext(Dispatchers.Default) { com.kilombino.kilowallet.core.crypto.Psbt.finish(p.exported, returned, p.coins, p.draft.outputs) }
-                scanner.broadcast(tx.rawHex, s.endpoint, s.pinned)
-            }.onSuccess { txid ->
-                _state.update { it.copy(send = SendPhase.Sent(txid)) }
-                refresh()
-            }.onFailure { e -> _state.update { it.copy(send = SendPhase.Failed(e.message ?: "The signed PSBT could not be used.")) } }
+        sendJob = scope.launch {
+            try {
+                val tx = withContext(cryptoDispatcher) { com.kilombino.kilowallet.core.crypto.Psbt.finish(p.exported, returned, p.coins, p.draft.outputs) }
+                if (!isCurrent(epoch, s)) return@launch
+                require(allowedCoins(s, p.draft.inputs).size == p.draft.inputs.size) { "A reviewed coin is frozen. Edit the payment." }
+                p.changeIndex?.let { addresses.reserve(receivingKey(s), 1, it) }
+                prefs.put(pendingKey(zpub), tx.rawHex)
+                val id = scanner.broadcast(tx.rawHex, s.endpoint, s.pinned)
+                prefs.put(pendingKey(zpub), null)
+                if (isCurrent(epoch, s)) { _state.update { it.copy(send = SendPhase.Sent(id)) }; refresh() }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (isCurrent(epoch, s)) _state.update { it.copy(send = pending(zpub) ?: SendPhase.Failed(e.message ?: "The signed PSBT could not be used.")) }
+            }
         }
     }
 
@@ -1251,7 +1295,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     if (!isCurrent(epoch, s)) return@launch
                     // Keep the exact signed transaction before the first send. A lost receipt
                     // must not invite a second, different payment.
-                    review.changeIndex?.let { addresses.reserve(zpub, 1, it) }
+                    review.changeIndex?.let { addresses.reserve(receivingKey(s), 1, it) }
                     prefs.put(pendingKey(zpub), signed.rawHex)
                     val txid = scanner.broadcast(signed.rawHex, s.endpoint, s.pinned)
                     prefs.put(pendingKey(zpub), null)
@@ -1330,16 +1374,16 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             try {
                 val (tx, coins) = scanner.replacementCoins(txid, s.rows, s.endpoint, s.pinned)
                 require(allowedCoins(s, coins).size == coins.size) { "A replacement input is frozen or reserved." }
-                addresses.observe(zpub, s.rows)
-                val index = addresses.next(zpub, 1)
+                addresses.observe(receivingKey(s), receiveRows(s))
+                val index = addresses.next(receivingKey(s), 1)
                 val d = withContext(cryptoDispatcher) {
-                    if (cancel) ReplacePlanner.cancel(txid, tx, coins, SendPlanner.changeScript(zpub, index), rate)
+                    if (cancel) ReplacePlanner.cancel(txid, tx, coins, changeScript(s, index), rate)
                     else ReplacePlanner.bump(txid, tx, coins, { spk ->
                         Address.electrumScriptHash(spk) in s.rows.filter { it.chainIndex == 1 }.map { it.scriptHash }.toSet()
                     }, rate)
                 }
                 scanner.verifyCoins(zpub, d.inputs, s.endpoint, s.pinned, s.keyType, s.activeTaproot)
-                if (cancel) addresses.checkAvailable(zpub, 1, index)
+                if (cancel) addresses.checkAvailable(receivingKey(s), 1, index)
                 if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Review(d, SendPlanner.feeConcern(d), index.takeIf { cancel })) }
             } catch (e: CancellationException) { throw e }
               catch (e: Exception) { if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Failed(e.message ?: "Could not prepare the replacement.")) } }
@@ -1417,6 +1461,9 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
 
     /** Make the backup file (words, passphrase and settings, sealed with [password]) and ask where to save it. */
     fun exportBackup(password: String) {
+        if (!engineAccess()) { say("Reopen Kilowallet with this wallet selected before backing it up."); return }
+        val backupState = state.value
+        val epoch = walletEpoch
         if (password.length < com.kilombino.kilowallet.core.backup.Kab.MIN_PASSWORD) { say("Use a password of at least ${com.kilombino.kilowallet.core.backup.Kab.MIN_PASSWORD} characters."); return }
         loadCurrentWords(I18n.tr("Unlock to write the backup file")) load@{ secret, error ->
             if (secret == null) { say(error ?: "Not unlocked: no file was written."); return@load }
@@ -1425,9 +1472,11 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 // Ark's wallet goes in when it runs on the wallet's words or on words derived from them
                 // (Android's fullSnapshot); an Ark of other words keeps its own backup.
                 val arkFiles = ark.backupFiles(words, pass)
+                if (epoch != walletEpoch || !sameWallet(backupState)) return@launch
+                val settings = settingsJson()
                 val file = withContext(Dispatchers.Default) {
                     com.kilombino.kilowallet.core.backup.Kab.encode(
-                        com.kilombino.kilowallet.core.backup.Kab.Snapshot(words, pass, nowMs(), _state.value.txs.size, settingsJson(),
+                        com.kilombino.kilowallet.core.backup.Kab.Snapshot(words, pass, nowMs(), backupState.txs.size, settings,
                             config = arkFiles?.first?.config, db = arkFiles?.first?.db, dbWal = arkFiles?.first?.dbWal,
                             arkDerived = arkFiles?.second == true), password)
                 }
@@ -1458,6 +1507,10 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             runCatching { withContext(Dispatchers.Default) { com.kilombino.kilowallet.core.backup.Kab.decode(bytes, password) } }
                 .onSuccess { snap ->
                     if (!Bip39.isValid(snap.words)) { say("The words in this file are not a valid backup."); return@onSuccess }
+                    val id = withContext(cryptoDispatcher) { WalletCatalog.idFor(Signer.accountZpub(snap.words, snap.passphrase)) }
+                    if ((snap.hasArk || snap.app?.get("lightning") != null) && !nativeEngineLease.permits(id)) {
+                        say("Close and reopen the app without another active node before restoring this backup."); return@onSuccess
+                    }
                     storeHot(snap.words, snap.passphrase) {
                         applySettings(snap.app)
                         if (snap.hasArk) ark.restoreFromBackup(snap)

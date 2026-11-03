@@ -71,7 +71,7 @@ object BalanceWatch {
         val client = ElectrumClient(endpoint, p.get("pin.${endpoint.host}:${endpoint.port}"), platform.transports)
         try {
             client.connect()
-            for (kind in listOf("HOT", "WATCH")) {
+            for (kind in WalletCatalog(p).value.wallets.map { it.id }) {
                 val old = decode(p.get(KEY_LIST + kind)).takeIf { it.isNotEmpty() } ?: continue
                 val coins = client.listUnspentMany(old.map { it.s })
                 val now = old.mapIndexed { i, e ->

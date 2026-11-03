@@ -93,14 +93,14 @@ enum Keychain {
 /// LND derives from the recovery words (Android keeps it the same way, under a Keystore key with
 /// no fingerprint).
 enum LndPassword {
-    private static let query: [String: Any] = [
+    private static func query(_ owner: String) -> [String: Any] { [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: "com.kilombino.kilowallet.lnd-password",
-        kSecAttrAccount as String: "lnd-0",
-    ]
+        kSecAttrAccount as String: owner,
+    ] }
 
-    static func load() -> String? {
-        var q = query
+    static func load(_ owner: String) -> String? {
+        var q = query(owner)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
@@ -108,14 +108,14 @@ enum LndPassword {
         return String(data: d, encoding: .utf8)
     }
 
-    static func save(_ hex: String) -> String? {
-        delete()
-        var q = query
+    static func save(_ owner: String, _ hex: String) -> String? {
+        var q = query(owner)
         q[kSecValueData as String] = Data(hex.utf8)
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        // A failed read must never replace the password of an existing node.
         let status = SecItemAdd(q as CFDictionary, nil)
         return status == errSecSuccess ? nil : "Keychain error \(status)"
     }
 
-    static func delete() { SecItemDelete(query as CFDictionary) }
+    static func delete(_ owner: String) { SecItemDelete(query(owner) as CFDictionary) }
 }

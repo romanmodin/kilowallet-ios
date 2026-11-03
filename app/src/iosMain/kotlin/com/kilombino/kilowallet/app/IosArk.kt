@@ -8,7 +8,7 @@ import platform.Foundation.*
 
 /** Ark on iPhone: the engine and its words through Swift, its folder through Foundation. */
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
-class IosArk(private val bridge: IosBridge, private val prefs: Prefs, private val memoryWords: Boolean) : ArkPlatform {
+class IosArk(private val bridge: IosBridge, private val prefs: Prefs, private val owner: String, private val memoryWords: Boolean) : ArkPlatform {
 
     override val engine = object : ArkEngine {
         override fun start(datadir: String, port: Int, mnemonic: String?, passphrase: String) = bridge.arkStart(datadir, port, mnemonic, passphrase)
@@ -19,7 +19,7 @@ class IosArk(private val bridge: IosBridge, private val prefs: Prefs, private va
 
     override val host = object : ArkHost {
         private val fm = NSFileManager.defaultManager
-        override val dir: String = bridge.arkDir()
+        override val dir: String = bridge.arkDir() + "/" + owner
         override fun http(method: String, url: String, body: String?, headers: Map<String, String>, timeoutMs: Int): Pair<Int, String> {
             val bearer = headers["Authorization"]?.removePrefix("Bearer ")
             val r = bridge.arkHttp(method, url, body, bearer, timeoutMs)
@@ -48,9 +48,9 @@ class IosArk(private val bridge: IosBridge, private val prefs: Prefs, private va
         }
         override fun pref(key: String): String? = prefs.get(key)
         override fun setPref(key: String, value: String?) = prefs.put(key, value)
-        override fun loadWords(): String? = if (memoryWords) words else bridge.arkWordsLoad()
-        override fun saveWords(text: String): String? = if (memoryWords) { words = text; null } else bridge.arkWordsSave(text)
-        override fun deleteWords() { if (memoryWords) words = null else bridge.arkWordsDelete() }
+        override fun loadWords(): String? = if (memoryWords) words else bridge.arkWordsLoad(owner)
+        override fun saveWords(text: String): String? = if (memoryWords) { words = text; null } else bridge.arkWordsSave(owner, text)
+        override fun deleteWords() { if (memoryWords) words = null else bridge.arkWordsDelete(owner) }
     }
 
     override fun beginArkWork(name: String): Any? = bridge.beginBackgroundWork(name).takeIf { it != 0L }

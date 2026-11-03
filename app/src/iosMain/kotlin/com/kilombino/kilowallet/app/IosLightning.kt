@@ -15,7 +15,7 @@ import platform.posix.time
 
 /** The Lightning node on iPhone: the engine and keychain through Swift, files through Foundation. */
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
-class IosLightning(private val bridge: IosBridge, private val memoryPassword: Boolean) : LightningPlatform {
+class IosLightning(private val bridge: IosBridge, private val owner: String, private val memoryPassword: Boolean) : LightningPlatform {
 
     override val engine = object : LndEngine {
         override fun start(args: String, cb: LndCallback) = bridge.lndStart(args, listener(cb))
@@ -30,7 +30,7 @@ class IosLightning(private val bridge: IosBridge, private val memoryPassword: Bo
 
     override val host = object : LndHost {
         private val fm = NSFileManager.defaultManager
-        override val dir: String = bridge.lndDir()
+        override val dir: String = bridge.lndDir() + "/" + owner
         private fun parent(path: String) = path.substringBeforeLast('/')
         override fun writeText(path: String, text: String) {
             fm.createDirectoryAtPath(parent(path), true, null, null)
@@ -73,9 +73,9 @@ class IosLightning(private val bridge: IosBridge, private val memoryPassword: Bo
     }
 
     private var memory: String? = null
-    override fun loadPassword(): String? = if (memoryPassword) memory else bridge.lndPasswordLoad()
-    override fun savePassword(hex: String): String? = if (memoryPassword) { memory = hex; null } else bridge.lndPasswordSave(hex)
-    override fun deletePassword() { if (memoryPassword) memory = null else bridge.lndPasswordDelete() }
+    override fun loadPassword(): String? = if (memoryPassword) memory else bridge.lndPasswordLoad(owner)
+    override fun savePassword(hex: String): String? = if (memoryPassword) { memory = hex; null } else bridge.lndPasswordSave(owner, hex)
+    override fun deletePassword() { if (memoryPassword) memory = null else bridge.lndPasswordDelete(owner) }
     override fun beginBackgroundWork(name: String): Any? = bridge.beginBackgroundWork(name).takeIf { it != 0L }
     override fun endBackgroundWork(token: Any?) { (token as? Long)?.let { bridge.endBackgroundWork(it) } }
 }

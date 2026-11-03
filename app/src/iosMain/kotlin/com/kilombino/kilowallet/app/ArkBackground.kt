@@ -18,7 +18,11 @@ private val background = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 fun arkRenewInBackground(bridge: IosBridge, waitS: Int, done: (Boolean) -> Unit) {
     background.launch {
         val ok = runCatching {
-            val ark = IosPlatform(bridge, null).ark ?: return@runCatching true
+            val platform = IosPlatform(bridge, null)
+            val saved = WalletCatalog(platform.prefs).value
+            val id = saved.wallets.singleOrNull { it.kind == WalletKind.HOT && it.id == saved.active }?.zpub?.let(WalletCatalog::idFor) ?: return@runCatching true
+            if (EnginePrefs(platform.prefs, id).get("ark.enabled") != "1" || !nativeEngineLease.claim(id)) return@runCatching true
+            val ark = platform.forEngineWallet(id).ark ?: return@runCatching true
             Ark.engine = ark.engine; Ark.host = ark.host
             if (!Ark.enabled() || !Ark.hasWords()) return@runCatching true
             Ark.ensureStarted()

@@ -63,6 +63,7 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun LightningTab(model: WalletModel, state: UiState, platform: AppPlatform) {
+    if (!model.engineAccess()) { Explain("Reopen Kilowallet with this wallet selected to use its node."); return }
     val ln = model.lightning
     val status by ln.status.collectAsState()
     DisposableEffect(Unit) { ln.watch(true); onDispose { ln.watch(false) } }

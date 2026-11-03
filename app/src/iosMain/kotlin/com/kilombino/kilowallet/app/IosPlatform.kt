@@ -137,12 +137,16 @@ class IosPlatform(private val bridge: IosBridge, override val demoScreen: String
      * The node when the app was built with the engine. Screenshot demos use it only for the live
      * start ("ln-live"), with a throwaway wallet and the password kept in memory.
      */
-    override val lightning: LightningPlatform? =
-        if (bridge.lndAvailable() && (demoScreen == null || demoScreen == "ln-live")) IosLightning(bridge, memoryPassword = demoScreen != null) else null
-
-    /** Ark when the app was built with the engine; screenshot demos only for the live start ("ark-live"). */
-    override val ark: ArkPlatform? =
-        if (bridge.arkAvailable() && (demoScreen == null || demoScreen == "ark-live")) IosArk(bridge, prefs, memoryWords = demoScreen != null) else null
+    override fun forEngineWallet(id: String): AppPlatform {
+        val scoped = EnginePrefs(prefs, id)
+        return object : AppPlatform by this@IosPlatform {
+            override val prefs = scoped
+            override val lightning = if (bridge.lndAvailable() && (demoScreen == null || demoScreen == "ln-live"))
+                IosLightning(bridge, id, memoryPassword = demoScreen != null) else null
+            override val ark = if (bridge.arkAvailable() && (demoScreen == null || demoScreen == "ark-live"))
+                IosArk(bridge, scoped, id, memoryWords = demoScreen != null) else null
+        }
+    }
 }
 
 /** Screenshot demos that run the real Tor. */

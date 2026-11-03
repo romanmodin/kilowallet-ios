@@ -60,9 +60,9 @@ interface IosBridge {
     /** The node's directory: Application Support/lnd, excluded from iCloud and device backups. */
     fun lndDir(): String
     /** The node wallet's password: a Keychain item without Face ID (after first unlock, this device only). */
-    fun lndPasswordLoad(): String?
-    fun lndPasswordSave(hex: String): String?
-    fun lndPasswordDelete()
+    fun lndPasswordLoad(owner: String): String?
+    fun lndPasswordSave(owner: String, hex: String): String?
+    fun lndPasswordDelete(owner: String)
     /** HTTPS request (blocking; never on the main thread): status and body, or status 0 and the error. */
     fun httpRequest(method: String, url: String, body: String?): IosHttpResult
     /** The same through Tor's SOCKS port [socksPort] (0: directly). */
@@ -105,9 +105,9 @@ interface IosBridge {
     /** The engine's folder: Application Support/ark, excluded from iCloud and device backups. */
     fun arkDir(): String
     /** Ark's words: a Keychain item without Face ID (after first unlock, this device only). */
-    fun arkWordsLoad(): String?
-    fun arkWordsSave(text: String): String?
-    fun arkWordsDelete()
+    fun arkWordsLoad(owner: String): String?
+    fun arkWordsSave(owner: String, text: String): String?
+    fun arkWordsDelete(owner: String)
     /**
      * HTTP request to the engine on 127.0.0.1 (http) or to the chain source (https), blocking:
      * status and body, or status 0 and the error. [bearer] goes in the Authorization header.

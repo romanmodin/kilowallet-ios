@@ -181,6 +181,7 @@ class I18nTest {
         "\\r\\t",
         "ab",
         "addresses.v1.12",
+        "engine.12.12", "wallet-[a-f0-9]{64}", // Storage namespace and wallet-ID validator.
         "backup.checked.",
         "backup-check", // Internal screenshot fixture ID.
         "bc1",
