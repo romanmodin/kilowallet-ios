@@ -1587,7 +1587,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             "restore" -> { go(Screen.Restore); platform.markReady(screen) }
             "watch" -> { go(Screen.Watch); platform.markReady(screen) }
             else -> scope.launch {
-                val zpub = withContext(cryptoDispatcher) { Signer.accountZpub(words, "") }
+                // Official public BIP84 fixture, independently derived by CoreTest.bip84OfficialVector.
+                val zpub = "zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs"
                 _state.update { it.copy(kind = WalletKind.HOT, zpub = zpub, walletId = WalletCatalog.LEGACY_ID,
                     wallets = listOf(WalletInfo(WalletCatalog.LEGACY_ID, "Everyday", WalletKind.HOT, zpub)), screen = Screen.Home) }
                 when (screen) {

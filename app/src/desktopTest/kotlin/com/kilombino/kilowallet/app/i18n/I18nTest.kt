@@ -164,6 +164,8 @@ class I18nTest {
 
     /** Not shown, or the same in every language: demo and preference keys, units, numbers, names. */
     private val neutral = listOf(
+        // Official public screenshot wallet identifier; identical in every locale.
+        "zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs",
         // Escaped line/field delimiters from the CSV encoder, never user-visible prose.
         "\n\\r\\t",
         "\\r\n",

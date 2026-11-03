@@ -37,7 +37,9 @@ for screen in welcome history create restore watch home simple lightning ln-star
   if [ -n "$ONLY" ] && [ "$screen" != "$ONLY" ]; then continue; fi
   xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
   DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" data)
-  rm -f "$DATA/Documents/kw-ready-$base"
+  mkdir -p "$DATA/Documents"
+  rm -f "$DATA/Documents/kw-ready-$base" "$DATA/Documents/kw-demo-selected"
+  printf %s "$screen" > "$DATA/Documents/kw-demo-case"
   # Let simctl finish launching before polling, without attaching a terminal whose
   # teardown can race the following launch. Keep each app's own stdout/stderr.
   log="$PWD/screenshots-logs/$name.log"
@@ -56,7 +58,9 @@ for screen in welcome history create restore watch home simple lightning ln-star
     [ -f "$DATA/Documents/kw-ready-$base" ] && break
     sleep 1
   done
-  if [ -f "$DATA/Documents/kw-ready-$base" ]; then echo "$screen: ready after ${i}s"; else
+  selected=$(cat "$DATA/Documents/kw-demo-selected" 2>/dev/null || true)
+  echo "$screen: simulator selected: ${selected:-none}"
+  if [ "$selected" = "$screen" ] && [ -f "$DATA/Documents/kw-ready-$base" ]; then echo "$screen: ready after ${i}s"; else
     echo "$screen: NOT ready after ${limit}s"
     xcrun simctl io "$UDID" screenshot "$OUT/failed-$name.png" || true
     exit 1

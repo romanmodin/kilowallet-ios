@@ -15,6 +15,15 @@ struct ComposeView: UIViewControllerRepresentable {
     /// it doesn't know.
     static func demoScreen() -> String? {
         #if DEBUG
+        #if targetEnvironment(simulator)
+        // CI writes the case into this throwaway simulator's container before each launch.
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        if let name = try? String(contentsOf: docs.appendingPathComponent("kw-demo-case"), encoding: .utf8),
+           !name.isEmpty {
+            try? name.write(to: docs.appendingPathComponent("kw-demo-selected"), atomically: true, encoding: .utf8)
+            return name
+        }
+        #endif
         if let s = ProcessInfo.processInfo.environment["KW_DEMO"], !s.isEmpty { return s }
         #endif
         return nil
