@@ -38,8 +38,11 @@ for screen in welcome history create restore watch home simple lightning ln-star
   xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
   DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" data)
   rm -f "$DATA/Documents/kw-ready-$base"
-  SIMCTL_CHILD_KW_DEMO="$screen" xcrun simctl launch --console-pty "$UDID" "$BUNDLE" > "screenshots-logs/$name.log" 2>&1 &
-  LP=$!
+  # Let simctl finish launching before polling, without attaching a terminal whose
+  # teardown can race the following launch. Keep each app's own stdout/stderr.
+  log="$PWD/screenshots-logs/$name.log"
+  SIMCTL_CHILD_KW_DEMO="$screen" xcrun simctl launch --terminate-running-process \
+    --stdout="$log" --stderr="$PWD/screenshots-logs/$name.stderr" "$UDID" "$BUNDLE"
   limit=20; { [ "$base" = home ] || [ "$base" = simple ] || [ "$base" = immature ]; } && limit=150
   case "$base" in pool*) limit=90 ;; esac
   # The real Lightning engine: LND starts, makes a throwaway wallet and syncs with the chain's peers.
@@ -53,7 +56,11 @@ for screen in welcome history create restore watch home simple lightning ln-star
     [ -f "$DATA/Documents/kw-ready-$base" ] && break
     sleep 1
   done
-  if [ -f "$DATA/Documents/kw-ready-$base" ]; then echo "$screen: ready after ${i}s"; else echo "$screen: NOT ready after ${limit}s"; exit 1; fi
+  if [ -f "$DATA/Documents/kw-ready-$base" ]; then echo "$screen: ready after ${i}s"; else
+    echo "$screen: NOT ready after ${limit}s"
+    xcrun simctl io "$UDID" screenshot "$OUT/failed-$name.png" || true
+    exit 1
+  fi
   sleep 3
   SHOT="$OUT/$(printf %02d $n)-$name.png"
   xcrun simctl io "$UDID" screenshot "$SHOT"
@@ -111,7 +118,6 @@ for screen in welcome history create restore watch home simple lightning ln-star
     [ -f "$ALOG" ] && cp "$ALOG" screenshots-logs/ark-live.log && grep -viE 'mnemonic|seed|passphrase' screenshots-logs/ark-live.log | tail -25 || echo "no Ark log at $ALOG"
     ls -la "$DATA/Library/Application Support/ark" || true
   fi
-  kill $LP 2>/dev/null || true
 done
 xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
 ls -la "$OUT"

@@ -1609,7 +1609,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                                 TxConf("cd".repeat(32), 0, true, -25_000)),
                             height = 970_011, scan = ScanPhase.Done, lastSyncedAt = platform.nowMillis(),
                             notes = notes, hideAmounts = screen == "private", amountUnit = if (screen == "units") AmountUnit.XBT else AmountUnit.SATS) }
-                        platform.markReady(screen)
+                        if (screen != "history") platform.markReady(screen) // History signals after its rows are laid out.
                     }
                     "home" -> scan()
                     "immature" -> scan()
@@ -1721,9 +1721,13 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         _state.update { it.copy(taprootXpub = tpub, receiveTaproot = true) }
                         go(if (screen == "receive-taproot") Screen.Receive else Screen.Settings); platform.markReady(screen)
                     }
-                    "pools", "pool-round", "pool-intro", "pool-history" -> {
+                    "pool-intro" -> {
+                        // Disabled onboarding has no pool roster or cryptographic round to prepare.
+                        pools.setEnabled(false)
+                        go(Screen.Pools); platform.markReady(screen)
+                    }
+                    "pools", "pool-round", "pool-history" -> {
                         withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }
-                        if (screen == "pool-intro") pools.setEnabled(false)
                         go(Screen.Pools); platform.markReady(screen)
                     }
                     "pool-create" -> { withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }; go(Screen.PoolCreate); platform.markReady(screen) }

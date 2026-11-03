@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import com.kilombino.kilowallet.app.i18n.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
@@ -113,7 +114,17 @@ private fun BtcTab(model: WalletModel, state: UiState, platform: AppPlatform) {
 
     // The history screenshot opens the movements section as a user would by scrolling.
     // Every normal wallet visit still opens at the top.
-    val scroll = rememberScrollState(initial = if (platform.demoScreen == "history") Int.MAX_VALUE else 0)
+    val scroll = rememberScrollState()
+    if (platform.demoScreen == "history" && matching.isNotEmpty()) {
+        LaunchedEffect(scroll.maxValue, matching.first().txid) {
+            val bottom = scroll.maxValue
+            if (bottom == Int.MAX_VALUE) return@LaunchedEffect // not measured yet
+            withFrameNanos { }
+            scroll.scrollTo(bottom)
+            withFrameNanos { }
+            platform.markReady("history")
+        }
+    }
     ScreenColumn(scroll) {
         LinkText(state.walletName + "  ▾ wallets", color = TextMain) { model.go(Screen.Wallets) }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
