@@ -11,10 +11,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  simulator:
-    name: Tests, simulator build, screenshots
+  native:
+    name: iPhone release and simulator qualification
     runs-on: macos-15
-    timeout-minutes: 140
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v4
 
@@ -104,46 +104,6 @@ jobs:
             build/xcodebuild.log
             screenshots-logs/
 
-  device:
-    name: Release build for device (unsigned)
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 25
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Cache Kotlin/Native
-        uses: actions/cache@v4
-        with:
-          path: ~/.konan
-          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
-      - name: Select supported Xcode
-        run: |
-          set -euo pipefail
-          selected=$(python3 -c 'import pathlib,re; p=list(pathlib.Path("/Applications").glob("Xcode_26*.app")); print(max(p,key=lambda x:tuple(map(int,re.findall(r"[0-9]+",x.name)))) if p else "")')
-          test -n "$selected"
-          sudo xcode-select --switch "$selected/Contents/Developer"
-          xcodebuild -version
-          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
-          test "${sdk%%.*}" -ge 26
-
-      - name: Fetch the Lightning engine (Lndmobile.xcframework, checked against lnd-engine/ENGINE)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./scripts/fetch-lnd-engine.sh
-
-      - name: Fetch the Ark engine (KilombinoArk.xcframework, checked against ark-engine/ENGINE)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./scripts/fetch-ark-engine.sh
-
-      - name: Fetch the Tor engine (KilombinoTor.xcframework, checked against tor-engine/ENGINE)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./scripts/fetch-tor-engine.sh
       - name: Build Release for iphoneos without signing
         run: |
           set -euo pipefail
