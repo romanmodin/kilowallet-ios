@@ -13,7 +13,7 @@ concurrency:
 jobs:
   simulator:
     name: Tests, simulator build, screenshots
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 140
     steps:
       - uses: actions/checkout@v4
@@ -106,7 +106,7 @@ jobs:
 
   device:
     name: Release build for device (unsigned)
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
