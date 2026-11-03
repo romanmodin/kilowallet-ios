@@ -111,7 +111,10 @@ private fun BtcTab(model: WalletModel, state: UiState, platform: AppPlatform) {
     val matching = filterHistory(state.txs, if (state.hideAmounts) emptyMap() else state.notes, query, filter)
     val hot = state.kind == WalletKind.HOT
 
-    ScreenColumn {
+    // The history screenshot opens the movements section as a user would by scrolling.
+    // Every normal wallet visit still opens at the top.
+    val scroll = rememberScrollState(initial = if (platform.demoScreen == "history") Int.MAX_VALUE else 0)
+    ScreenColumn(scroll) {
         LinkText(state.walletName + "  ▾ wallets", color = TextMain) { model.go(Screen.Wallets) }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.clip(RoundedCornerShape(10.dp)).background(if (hot) Purple else Orange).padding(horizontal = 14.dp, vertical = 8.dp)) {
