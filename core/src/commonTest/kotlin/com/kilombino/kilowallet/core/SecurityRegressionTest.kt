@@ -33,7 +33,7 @@ class SecurityRegressionTest {
     private fun client(f: Fake, pin: String? = fp) = ElectrumClient(NodeEndpoint.DEFAULT, pin, TransportFactory { _, _, _, _ -> f })
 
     @Test fun neverDowngradesTlsForAnyHostname() {
-        for (host in listOf("fd-wallet.example", "10.wallet.example", "192.168.wallet.example", "172.16.wallet.example", "localhost", "192.168.1.2", "[fd00::1]")) {
+        for (host in listOf("fd-wallet.example", "10.wallet.example", "192.168.wallet.example", "172.16.wallet.example", "localhost", "test.onion", "192.168.1.2", "[fd00::1]")) {
             val tlsAttempts = mutableListOf<Boolean>()
             val c = ElectrumClient(NodeEndpoint(host, 50002), null, TransportFactory { _, _, tls, _ ->
                 tlsAttempts += tls; throw ElectrumException("TLS failure")
@@ -92,6 +92,20 @@ class SecurityRegressionTest {
             assertFailsWith<IllegalArgumentException> { SendPlanner.maxSendable(rate, listOf(coin)) }
         }
         assertEquals(70.0, SendPlanner.estimateVbytes(253, listOf(change)) - SendPlanner.estimateVbytes(252, listOf(change)))
+    }
+    @Test fun typedFeesPreserveCompactSizeAndRejectImpossibleCounts() {
+        val out = listOf(change)
+        // A P2TR input carries a 65-byte unified signature; nested SegWit includes its redeemScript.
+        assertEquals(99.25, SendPlanner.estimateVbytes(1, out, taprootIn = 1))
+        assertEquals(132.5, SendPlanner.estimateVbytes(1, out, nestedIn = 1))
+        assertEquals(190.25, SendPlanner.estimateVbytes(2, out, taprootIn = 1, nestedIn = 1))
+        assertEquals(70.0, SendPlanner.estimateVbytes(253, out, taprootIn = 1) -
+            SendPlanner.estimateVbytes(252, out, taprootIn = 1))
+        assertEquals(33.0, SendPlanner.estimateVbytes(1, List(253) { change }) -
+            SendPlanner.estimateVbytes(1, List(252) { change }))
+        for ((count, tr, ne) in listOf(Triple(0, 0, 0), Triple(1, 2, 0), Triple(1, 1, 1), Triple(1, -1, 0))) {
+            assertFailsWith<IllegalArgumentException> { SendPlanner.estimateFee(count, out, 1.0, tr, ne) }
+        }
     }
     @Test fun parserRejectsTruncationTrailingBytesAndHostileCounts() {
         val id = TxParse.txid(TxParse.parse(raw))

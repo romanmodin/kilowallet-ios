@@ -103,14 +103,15 @@ fun LinkText(text: String, color: Color = TextSoft, modifier: Modifier = Modifie
 fun Field(
     value: String, onChange: (String) -> Unit, label: String, modifier: Modifier = Modifier,
     keyboard: KeyboardType = KeyboardType.Text, singleLine: Boolean = true, minLines: Int = 1, secret: Boolean = false, enabled: Boolean = true,
+    password: Boolean = false,
 ) {
     OutlinedTextField(
         value = value, onValueChange = onChange, modifier = modifier.fillMaxWidth(), enabled = enabled,
         label = { Text(label, style = MaterialTheme.typography.bodySmall) },
-        singleLine = singleLine, minLines = minLines,
-        visualTransformation = if (secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        singleLine = singleLine || password || secret, minLines = minLines,
         textStyle = MaterialTheme.typography.bodyLarge,
-        keyboardOptions = KeyboardOptions(keyboardType = if (secret) KeyboardType.Password else keyboard, autoCorrectEnabled = false,
+        visualTransformation = if (password || secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        keyboardOptions = KeyboardOptions(keyboardType = if (password || secret) KeyboardType.Password else keyboard, autoCorrectEnabled = false,
             capitalization = KeyboardCapitalization.None),
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = Purple, unfocusedBorderColor = TextFaint,

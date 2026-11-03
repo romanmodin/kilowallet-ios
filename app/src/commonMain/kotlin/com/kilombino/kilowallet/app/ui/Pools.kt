@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -34,6 +35,7 @@ import com.kilombino.kilowallet.app.PoolPayRequest
 import com.kilombino.kilowallet.app.PoolsModel
 import com.kilombino.kilowallet.app.PoolsUi
 import com.kilombino.kilowallet.app.Screen
+import com.kilombino.kilowallet.app.Tab
 import com.kilombino.kilowallet.app.UiState
 import com.kilombino.kilowallet.app.WalletKind
 import com.kilombino.kilowallet.app.WalletModel
@@ -99,7 +101,7 @@ private val active = setOf(PoolSession.Phase.JOINING, PoolSession.Phase.OPEN, Po
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PoolsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
+fun PoolsScreen(model: WalletModel, state: UiState, platform: AppPlatform, embedded: Boolean = false) {
     val pools = model.pools
     val ui by pools.state.collectAsState()
     // A heartbeat while the screen is open: countdowns move, and the open pools are looked up again every minute.
@@ -107,29 +109,49 @@ fun PoolsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
     LaunchedEffect(Unit) { pools.resume(); pools.refreshPools(); while (true) { delay(2_000); tick++; if (tick % 30 == 0) pools.refreshPools() } }
     if (tick < 0) return
 
-    ScreenColumn {
-        BackLink { model.back() }
-        Text("Kilojoin", style = MaterialTheme.typography.titleLarge, color = TextMain)
+    // On the main screen's KILOJOIN tab (Android: COINJOIN) there is no way back to take: the tabs are above.
+    val column: @Composable (@Composable () -> Unit) -> Unit = if (embedded) { c -> TabColumn(c) } else { c -> ScreenColumn(c) }
+    column {
+        if (!embedded) {
+            BackLink { model.back() }
+            Text("Kilojoin", style = MaterialTheme.typography.titleLarge, color = TextMain)
+        }
         if (state.kind != WalletKind.HOT) {
             Panel(accent = Orange) {
                 Explain("Kilojoin needs a wallet that can sign: a watch-only wallet has no keys to take part in a pool. " +
                     "A watch-only key can still receive a pool's outputs: set it in a spending wallet's Kilojoin screen.", color = TextSoft)
             }
             WhatItIs()
-            return@ScreenColumn
+            return@column
         }
-        if (!ui.enabled) { Intro(pools) { model.back() }; return@ScreenColumn }
+        if (!ui.enabled) { Intro(pools) { if (embedded) model.selectTab(Tab.BTC) else model.back() }; return@column }
         PoolsMessages(pools, ui)
         ForegroundNote()
 
         val mine = ui.rounds
         val going = mine.filter { it.phase in active }
-        val finished = mine.filter { it.phase !in active }
-        if (going.isNotEmpty()) {
-            SectionLabel("Your rounds")
+        val finished = mine.filter { it.phase !in active }.sortedByDescending { maxOf(it.endedAt, it.sentAt) }
+        // POOLS · IN PROGRESS (n) · HISTORY, as Android 1.4.0; a round waiting on you opens IN PROGRESS.
+        var tab by remember { mutableStateOf(when {
+            platform.demoScreen?.startsWith("pool-history") == true -> 2
+            going.any { it.phase == PoolSession.Phase.SIGNING || it.phase == PoolSession.Phase.VOTING } -> 1
+            else -> 0
+        }) }
+        PoolTabs(tab, going.size) { tab = it }
+        if (tab == 1) {
+            if (going.isEmpty()) Explain("No rounds going. Join a pool, or open your own, in POOLS.")
             going.forEach { RoundCard(model, pools, it, ui.rev, platform) }
+            return@column
         }
-        PrimaryButton("＋  Open a pool", Modifier.fillMaxWidth()) { pools.startPayment(null); model.go(Screen.PoolCreate) }
+        if (tab == 2) {
+            if (finished.isEmpty()) Explain("Confirmed and cancelled rounds show here until you remove them.")
+            else {
+                finished.forEach { RoundCard(model, pools, it, ui.rev, platform) }
+                LinkText("remove all", color = TextFaint) { pools.removeFinished() }
+            }
+            return@column
+        }
+        PrimaryButton("＋  Open a pool", Modifier.fillMaxWidth(), color = PoolBlue) { pools.startPayment(null); model.go(Screen.PoolCreate) }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             SectionLabel("Open pools")
@@ -137,18 +159,13 @@ fun PoolsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
             LinkText(if (ui.loading) "looking…" else "↻ refresh", color = TextSoft) { pools.refreshPools() }
         }
         ui.relayError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Warn) }
-        // Only rounds still going hide their pool: one that ended or was left shows again to join.
+        // A pool this phone already has a seat in stays listed: joining it again takes another seat.
         val ours = going.map { it.poolId }.toSet()
-        val shown = ui.open.orEmpty().filter { it.id !in ours }
+        val shown = ui.open.orEmpty()
         if (ui.open != null && shown.isEmpty()) Explain("No open pools right now. Open one, and others can join it.")
         if (ui.open == null && ui.loading) Explain("asking the relay…")
-        shown.forEach { t -> OpenPoolCard(t) { model.go(Screen.PoolJoin(t.id)) } }
+        shown.forEach { t -> OpenPoolCard(t, t.id in ours) { model.go(Screen.PoolJoin(t.id)) } }
 
-        if (finished.isNotEmpty()) {
-            SectionLabel("Finished")
-            finished.forEach { RoundCard(model, pools, it, ui.rev, platform) }
-            LinkText("remove all finished", color = TextFaint) { pools.removeFinished() }
-        }
         WatchKeyPanel(pools, ui)
         HowItGoes()
         WhatItIs()
@@ -159,7 +176,7 @@ fun PoolsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
 private fun PoolsMessages(pools: PoolsModel, ui: PoolsUi) {
     ui.busy?.let { b ->
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            CircularProgressIndicator(color = Purple)
+            CircularProgressIndicator(color = PoolBlue)
             Text(b, style = MaterialTheme.typography.bodyMedium, color = TextSoft)
         }
     }
@@ -167,7 +184,7 @@ private fun PoolsMessages(pools: PoolsModel, ui: PoolsUi) {
         AlertDialog(
             onDismissRequest = pools::dismissMessage,
             text = { Text(reasonText(m), style = MaterialTheme.typography.bodyMedium) },
-            confirmButton = { TextButton(onClick = pools::dismissMessage) { Text("OK", color = Purple) } },
+            confirmButton = { TextButton(onClick = pools::dismissMessage) { Text("OK", color = PoolBlue) } },
             containerColor = PanelBg, textContentColor = TextMain,
         )
     }
@@ -199,7 +216,7 @@ private fun Intro(pools: PoolsModel, onDecline: () -> Unit) {
             "not what is yours.", color = TextSoft)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SecondaryButton("Not now", Modifier.weight(1f), color = TextSoft) { onDecline() }
-            PrimaryButton("Turn on", Modifier.weight(1f)) { pools.setEnabled(true) }
+            PrimaryButton("Turn on", Modifier.weight(1f), color = PoolBlue) { pools.setEnabled(true) }
         }
     }
     ForegroundNote()
@@ -224,19 +241,19 @@ private fun WhatItIs() {
     Panel {
         SectionLabel("About Kilojoin")
         Explain("Kilojoin is an open protocol over nostr, the same one Kilowallet for Android and for desktop use, so you can " +
-            "be in a pool with people on any of them. Native SegWit (bc1q) pools only in this app; Taproot pools are not " +
-            "shown. Pools are open from ${formatSats(Protocol.MIN_AMOUNT)} sats per person, " +
+            "be in a pool with people on any of them. A pool is all native SegWit (bc1q) or all Taproot (bc1p); Taproot pools " +
+            "show once Taproot is on in Settings. Several seats of yours in one pool count as one person. Pools are open from ${formatSats(Protocol.MIN_AMOUNT)} sats per person, " +
             "${formatSats(Protocol.TEST_MIN_AMOUNT)} sats per output at least.")
     }
 }
 
 @Composable
-private fun OpenPoolCard(t: Protocol.Terms, onJoin: () -> Unit) {
+private fun OpenPoolCard(t: Protocol.Terms, seated: Boolean, onJoin: () -> Unit) {
     Panel {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text((if (t.private) "🔒 " else "") + "${poolAmount(t)} sats", style = MaterialTheme.typography.titleMedium, color = TextMain)
-                Text(poolKind(t), style = MaterialTheme.typography.bodySmall, color = Purple)
+                Text(poolKind(t), style = MaterialTheme.typography.bodySmall, color = PoolBlue)
                 Text("${t.peers}/${t.maxPeers} people (min ${t.minPeers}) · ${rate(t.feeRate)} sat/vB · closes in ${remaining(t.expiresAt)}",
                     style = MaterialTheme.typography.bodySmall, color = TextSoft)
                 val fs = PoolTx.feeShare(t.feeRate, false, 1, t.script, t.outputs)
@@ -244,7 +261,7 @@ private fun OpenPoolCard(t: Protocol.Terms, onJoin: () -> Unit) {
                     "(${formatSats(fs)} with a coin of exactly ${formatSats(t.mixTotal + fs)})",
                     style = MaterialTheme.typography.bodySmall, color = TextFaint)
             }
-            TextButton(onClick = onJoin) { Text("JOIN", color = Purple, style = MaterialTheme.typography.labelLarge) }
+            TextButton(onClick = onJoin) { Text(if (seated) "Another seat" else "JOIN", color = PoolBlue, style = MaterialTheme.typography.labelLarge) }
         }
     }
 }
@@ -265,13 +282,13 @@ private fun WatchKeyPanel(pools: PoolsModel, ui: PoolsUi) {
             error?.let { Text(reasonText(it), style = MaterialTheme.typography.bodySmall, color = Bad) }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SecondaryButton("Cancel", Modifier.weight(1f), color = TextSoft) { editing = false; key = "" }
-                PrimaryButton("Save", Modifier.weight(1f), enabled = key.isNotBlank()) {
+                PrimaryButton("Save", Modifier.weight(1f), enabled = key.isNotBlank(), color = PoolBlue) {
                     error = pools.setWatchKey(key)
                     if (error == null) { editing = false; key = "" }
                 }
             }
         } else Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            LinkText(if (ui.watchKey == null) "add a watch-only key" else "change it", color = Purple) { editing = true }
+            LinkText(if (ui.watchKey == null) "add a watch-only key" else "change it", color = PoolBlue) { editing = true }
             if (ui.watchKey != null) LinkText("remove it", color = TextFaint) { pools.setWatchKey(null) }
         }
     }
@@ -286,18 +303,20 @@ private fun RoundCard(model: WalletModel, pools: PoolsModel, st: PoolSession.Sta
         PoolSession.Phase.CONFIRMED -> Good
         PoolSession.Phase.ABORTED, PoolSession.Phase.REJECTED -> Bad
         PoolSession.Phase.SIGNING, PoolSession.Phase.VOTING -> Warn
-        else -> Purple
+        else -> PoolBlue
     }
     val t = st.terms
-    val people = if (st.round.isNotEmpty()) st.round.size else st.seats.size
-    val dest = pools.destOf(st.poolId)
+    // This phone's own seats in the pool count as one person (Android 1.3.6).
+    val people = pools.people(st)
+    val dest = pools.destOf(st.key)
     Panel(accent = color) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("${poolAmount(t)} sats", style = MaterialTheme.typography.titleMedium, color = TextMain, modifier = Modifier.weight(1f))
             Text((if (t.private) "🔒 " else "") + (if (st.creator) "your pool" else "joined"), style = MaterialTheme.typography.bodySmall, color = TextFaint)
         }
         Text(when (st.phase) {
-            PoolSession.Phase.JOINING -> "Asking to join…"
+            PoolSession.Phase.JOINING -> if (st.joinAfter > NostrEvent.nowSeconds())
+                "Joining in ${st.joinAfter - NostrEvent.nowSeconds()} s: a random wait, so your seats don't show up together." else "Asking to join…"
             PoolSession.Phase.OPEN -> "Waiting for people · $people/${t.maxPeers} · closes in ${remaining(t.expiresAt)}"
             PoolSession.Phase.VOTING -> "Close now with $people people?"
             PoolSession.Phase.CLOSING -> "Closing with $people people · collecting the equal outputs"
@@ -314,9 +333,18 @@ private fun RoundCard(model: WalletModel, pools: PoolsModel, st: PoolSession.Sta
         val ch = formatSats(st.seat.changeValue)
         Text(if (st.seat.changeValue > 0) "$coins: $inV → $out + $ch change · fee $fee" else "$coins: $inV → $out · fee $fee",
             style = MaterialTheme.typography.bodySmall, color = TextFaint)
-        if (dest == PoolDest.WATCH) Text("your equal outputs go to the watch-only wallet", style = MaterialTheme.typography.bodySmall, color = Purple)
+        timesOf(st)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = TextSoft) }
+        // Where the equal outputs went (Android 1.4.0 HISTORY): the wallet and the address.
+        if (st.phase == PoolSession.Phase.BROADCAST || st.phase == PoolSession.Phase.CONFIRMED) {
+            val where = if (dest == PoolDest.WATCH) "👁 watch-only wallet" else if (dest == PoolDest.PAY) "the recipients" else "🔥 hot wallet"
+            Text("to $where", style = MaterialTheme.typography.bodySmall, color = PoolBlue)
+            if (dest != PoolDest.PAY) pools.outputAddresses(st).forEach { a ->
+                Text(shortAddress(a), style = MaterialTheme.typography.bodySmall, color = TextFaint)
+            }
+        }
+        if (dest == PoolDest.WATCH) Text("your equal outputs go to the watch-only wallet", style = MaterialTheme.typography.bodySmall, color = PoolBlue)
         if (dest == PoolDest.PAY) Text("a payment: it goes out only when the pool closes; if it does not fill, nothing is paid",
-            style = MaterialTheme.typography.bodySmall, color = Purple)
+            style = MaterialTheme.typography.bodySmall, color = PoolBlue)
 
         var confirmLeave by remember { mutableStateOf(false) }
         if (confirmLeave) AlertDialog(
@@ -325,7 +353,7 @@ private fun RoundCard(model: WalletModel, pools: PoolsModel, st: PoolSession.Sta
             text = { Text(if (st.creator) "The round is cancelled for everyone in it, and they are told so. Nobody loses anything: " +
                 "no transaction exists until all have signed, so every coin stays where it is."
                 else "Your seat is freed and your coins are yours to spend again. Nothing was signed, so nothing moves.") },
-            confirmButton = { TextButton(onClick = { confirmLeave = false; pools.leave(st.poolId) }) {
+            confirmButton = { TextButton(onClick = { confirmLeave = false; pools.leave(st.key) }) {
                 Text(if (st.creator) "CANCEL POOL" else "LEAVE", color = Bad) } },
             dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("STAY", color = TextSoft) } },
             containerColor = PanelBg, titleContentColor = TextMain, textContentColor = TextSoft,
@@ -333,11 +361,11 @@ private fun RoundCard(model: WalletModel, pools: PoolsModel, st: PoolSession.Sta
         when (st.phase) {
             PoolSession.Phase.JOINING -> {
                 Explain("Waiting for the pool's creator to let you in. If nobody answers in ${PoolSession.JOIN_TIMEOUT / 60} minutes the request is dropped.")
-                SecondaryButton("Cancel", Modifier.fillMaxWidth(), color = TextSoft) { pools.leave(st.poolId) }
+                SecondaryButton("Cancel", Modifier.fillMaxWidth(), color = TextSoft) { pools.leave(st.key) }
             }
             PoolSession.Phase.OPEN -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (people >= t.minPeers) PrimaryButton("Ask to close now", Modifier.weight(1f)) { pools.requestClose(st.poolId) }
+                    if (people >= t.minPeers) PrimaryButton("Ask to close now", Modifier.weight(1f), color = PoolBlue) { pools.requestClose(st.key) }
                     SecondaryButton(if (st.creator) "Cancel pool" else "Leave", Modifier.weight(1f), color = TextSoft) { confirmLeave = true }
                 }
                 if (people < t.minPeers) Explain("It can close once ${t.minPeers} people are in.")
@@ -351,8 +379,8 @@ private fun RoundCard(model: WalletModel, pools: PoolsModel, st: PoolSession.Sta
                     Explain("Someone asked to close the pool now. Answer before ${clock(st.voteDeadline)}: if you accept, the round starts " +
                         "and you will be asked to check and sign it.")
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        PrimaryButton("Accept", Modifier.weight(1f)) { pools.vote(st.poolId, true) }
-                        SecondaryButton("Not yet", Modifier.weight(1f), color = TextSoft) { pools.vote(st.poolId, false) }
+                        PrimaryButton("Accept", Modifier.weight(1f), color = PoolBlue) { pools.vote(st.key, true) }
+                        SecondaryButton("Not yet", Modifier.weight(1f), color = TextSoft) { pools.vote(st.key, false) }
                     }
                 }
             }
@@ -362,13 +390,67 @@ private fun RoundCard(model: WalletModel, pools: PoolsModel, st: PoolSession.Sta
             PoolSession.Phase.BROADCAST, PoolSession.Phase.CONFIRMED -> st.txid?.let { txid ->
                 Text(shortTxid(txid), style = MaterialTheme.typography.bodySmall, color = TextSoft)
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    LinkText("open in the explorer", color = Purple) { runCatching { uri.openUri("${Chain.EXPLORER}/tx/$txid") } }
-                    if (st.phase == PoolSession.Phase.CONFIRMED) LinkText("remove", color = TextFaint) { pools.remove(st.poolId) }
+                    LinkText("open in the explorer", color = PoolBlue) { runCatching { uri.openUri("${Chain.EXPLORER}/tx/$txid") } }
+                    if (st.phase == PoolSession.Phase.CONFIRMED) LinkText("remove", color = TextFaint) { pools.remove(st.key) }
                 }
             }
-            PoolSession.Phase.ABORTED, PoolSession.Phase.REJECTED -> LinkText("remove", color = TextFaint) { pools.remove(st.poolId) }
+            PoolSession.Phase.ABORTED, PoolSession.Phase.REJECTED -> LinkText("remove", color = TextFaint) { pools.remove(st.key) }
         }
     }
+}
+
+/** POOLS · IN PROGRESS (n) · HISTORY (Android `CoinjoinTabs`). */
+@Composable
+private fun PoolTabs(tab: Int, inProgress: Int, onTab: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(PanelBg).padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        listOf("POOLS", "IN PROGRESS", "HISTORY").forEachIndexed { i, label ->
+            val on = i == tab
+            Row(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(if (on) PoolBlue else Color.Transparent)
+                .clickable { onTab(i) }.padding(vertical = 10.dp),
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = if (on) Ink else TextSoft, maxLines = 1)
+                if (i == 1 && inProgress > 0) Text(" $inProgress", style = MaterialTheme.typography.labelSmall, color = if (on) Ink else PoolBlue)
+            }
+        }
+    }
+}
+
+/**
+ * When a round went out and ended, as HISTORY shows it (Android `timesOf`): "📅 Sent 28 Oct 2026, 10:42 ·
+ * confirmed 10:51", the day again only when it changed. Times in UTC. Null while it goes on.
+ */
+private fun timesOf(st: PoolSession.State): String? {
+    val months = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    fun hhmm(at: Long) = "${((at % 86400) / 3600).toString().padStart(2, '0')}:${((at % 3600) / 60).toString().padStart(2, '0')} UTC"
+    fun day(at: Long) = civilDay(at / 86400).let { (y, m, d) -> "$d ${months[m - 1]} $y, " } + hhmm(at)
+    fun sameDay(a: Long, b: Long) = a / 86400 == b / 86400
+    val sent = st.sentAt; val ended = st.endedAt
+    return when (st.phase) {
+        PoolSession.Phase.BROADCAST -> if (sent > 0) "📅 Sent ${day(sent)}" else null
+        PoolSession.Phase.CONFIRMED -> when {
+            sent > 0 && ended > 0 -> "📅 Sent ${day(sent)} · confirmed ${if (sameDay(sent, ended)) hhmm(ended) else day(ended)}"
+            sent > 0 -> "📅 Sent ${day(sent)}"
+            ended > 0 -> "📅 Confirmed ${day(ended)}"
+            else -> null
+        }
+        PoolSession.Phase.ABORTED -> if (ended > 0) "📅 Cancelled ${day(ended)}" else null
+        PoolSession.Phase.REJECTED -> if (ended > 0) "📅 Refused ${day(ended)}" else null
+        else -> null
+    }
+}
+
+/** Year, month (1–12) and day of the UTC day [days] after 1970-01-01 (H. Hinnant's civil_from_days). */
+internal fun civilDay(days: Long): Triple<Long, Int, Int> {
+    val z = days + 719468
+    val era = (if (z >= 0) z else z - 146096) / 146097
+    val doe = z - era * 146097
+    val yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    val mp = (5 * doy + 2) / 153
+    val d = (doy - (153 * mp + 2) / 5 + 1).toInt()
+    val m = (if (mp < 10) mp + 3 else mp - 9).toInt()
+    return Triple(yoe + era * 400 + if (m <= 2) 1 else 0, m, d)
 }
 
 private fun clock(at: Long): String {
@@ -379,7 +461,7 @@ private fun clock(at: Long): String {
 /** What the transaction gives us, checked before the user signs; the button only when the check passes. */
 @Composable
 private fun SignReview(pools: PoolsModel, st: PoolSession.State, platform: AppPlatform) {
-    val session = pools.session(st.poolId)
+    val session = pools.session(st.key)
     val plan = session?.plan()
     if (st.postedSig) { Explain("Signed. Waiting for the others (${st.sigs.size}/${plan?.coins?.size ?: "?"} coins)…"); return }
     if (plan == null) { Explain("The transaction is not complete yet."); return }
@@ -401,7 +483,7 @@ private fun SignReview(pools: PoolsModel, st: PoolSession.State, platform: AppPl
             "this transaction only.", style = MaterialTheme.typography.bodySmall, color = Good)
         else Text("✗ Not signed: ${reasonText(problem)}", style = MaterialTheme.typography.bodySmall, color = Bad)
     }
-    PrimaryButton("Sign with ${platform.unlockName}", Modifier.fillMaxWidth(), enabled = problem == null, color = Warn) { pools.sign(st.poolId) }
+    PrimaryButton("Sign with ${platform.unlockName}", Modifier.fillMaxWidth(), enabled = problem == null, color = Warn) { pools.sign(st.key) }
 }
 
 // ---------------------------------------------------------------------- coins
@@ -416,7 +498,7 @@ private fun CoinList(pools: PoolsModel, coins: List<SpendableUtxo>?, chosen: Mut
             val sel = chosen.any { it.txid == u.txid && it.vout == u.vout }
             val usable = max > 1 || u.value >= minOne
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                .background(if (sel) Purple.copy(alpha = 0.15f) else PanelBg)
+                .background(if (sel) PoolBlue.copy(alpha = 0.15f) else PanelBg)
                 .clickable(enabled = usable) {
                     if (sel) chosen.removeAll { it.txid == u.txid && it.vout == u.vout }
                     else if (max == 1) { chosen.clear(); chosen.add(u) }
@@ -430,7 +512,7 @@ private fun CoinList(pools: PoolsModel, coins: List<SpendableUtxo>?, chosen: Mut
                     }
                     Text("m/84'/0'/0'/${u.chainIndex}/${u.index}", color = TextFaint, style = MaterialTheme.typography.bodySmall)
                 }
-                if (sel) Text("✓", color = Purple)
+                if (sel) Text("✓", color = PoolBlue)
             }
         }
     }
@@ -462,7 +544,7 @@ fun PoolJoinScreen(model: WalletModel, state: UiState, poolId: String) {
     var password by remember { mutableStateOf("") }
     var dest by remember { mutableStateOf(PoolDest.HOT) }
     LaunchedEffect(poolId) {
-        coins = runCatching { if (model.isDemo) demoCoins() else pools.poolCoins() }.getOrDefault(emptyList())
+        coins = runCatching { if (model.isDemo) demoCoins() else pools.poolCoins(t?.script) }.getOrDefault(emptyList())
         // Screenshot mode: the exact coin ticked, to show what joining with it looks like.
         if (model.isDemo && t != null) coins?.firstOrNull { it.value == PoolTx.minimumCoin(t.amount, t.feeRate, t.script, t.outputs) }?.let { chosen.add(it) }
     }
@@ -471,8 +553,12 @@ fun PoolJoinScreen(model: WalletModel, state: UiState, poolId: String) {
         PoolsMessages(pools, ui)
         if (t == null) { Explain("That pool is no longer open."); return@ScreenColumn }
         Text("Join · ${poolAmount(t)} sats", style = MaterialTheme.typography.titleLarge, color = TextMain)
+        if (t.id in pools.busyPools()) Panel(accent = Good) {
+            SectionLabel("Another seat", Good)
+            Explain("Another seat of yours counts as one more member: the others get less privacy than they see, and spending both results together later links them.")
+        }
         Panel {
-            Text(poolKind(t), style = MaterialTheme.typography.bodySmall, color = Purple)
+            Text(poolKind(t), style = MaterialTheme.typography.bodySmall, color = PoolBlue)
             Text("${t.peers}/${t.maxPeers} people (min ${t.minPeers}) · ${rate(t.feeRate)} sat/vB · closes in ${remaining(t.expiresAt)}",
                 style = MaterialTheme.typography.bodySmall, color = TextSoft)
         }
@@ -501,7 +587,7 @@ fun PoolJoinScreen(model: WalletModel, state: UiState, poolId: String) {
         val total = chosen.sumOf { it.value }
         val ok = chosen.isNotEmpty() && PoolTx.change(total, t.amount, t.feeRate, chosen.size, t.script, t.outputs) != null &&
             (!t.private || password.isNotEmpty()) && ui.busy == null
-        PrimaryButton("Join with ${model.unlockName}", Modifier.fillMaxWidth(), enabled = ok) {
+        PrimaryButton("Join with ${model.unlockName}", Modifier.fillMaxWidth(), enabled = ok, color = PoolBlue) {
             pools.join(t, chosen.toList(), dest, password) { joined -> if (joined) model.go(Screen.Pools) }
         }
         Explain("Joining signs nothing that can move your coins: it only proves you own them. You sign the round at the end, after checking it.")
@@ -519,7 +605,7 @@ fun PoolPayScreen(model: WalletModel, state: UiState) {
     val amounts = remember { mutableStateListOf<String>().also { l -> start?.recipients?.forEach { l += it.second.toString() }; if (l.isEmpty()) l += "" } }
     var rateText by remember { mutableStateOf(start?.feeRate?.let { rate(maxOf(1.0, it)) } ?: "1") }
     val rs = addrs.indices.map { addrs[it].trim() to (amounts[it].filter { c -> c.isDigit() }.toLongOrNull() ?: 0L) }
-    val check = PoolPayment.check(rs)
+    val check = PoolPayment.check(rs, taprootOk = state.taprootXpub != null)
     val feeRate = rateText.replace(',', '.').toDoubleOrNull()
     ScreenColumn {
         BackLink { model.go(Screen.Send) }
@@ -540,7 +626,7 @@ fun PoolPayScreen(model: WalletModel, state: UiState) {
                 AmountFields(amounts[i], { amounts[i] = it }, state)
             }
         }
-        if (addrs.size < Protocol.MAX_OUTPUTS) LinkText("＋ add a recipient", color = Purple) { addrs += ""; amounts += "" }
+        if (addrs.size < Protocol.MAX_OUTPUTS) LinkText("＋ add a recipient", color = PoolBlue) { addrs += ""; amounts += "" }
         Panel {
             SectionLabel("Fee rate")
             Field(rateText, { rateText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } }, "sat/vB (1 to 500)", keyboard = KeyboardType.Decimal)
@@ -552,7 +638,7 @@ fun PoolPayScreen(model: WalletModel, state: UiState) {
             check.paymentOk -> "${formatSats(sum)} sats to ${rs.size} recipient(s): a shared payment"
             else -> reasonText(check.reason ?: "")
         }, style = MaterialTheme.typography.bodySmall, color = if (check.any) Good else Warn)
-        PrimaryButton("Continue", Modifier.fillMaxWidth(), enabled = ready && check.any && feeRate != null && feeRate in 1.0..500.0) {
+        PrimaryButton("Continue", Modifier.fillMaxWidth(), enabled = ready && check.any && feeRate != null && feeRate in 1.0..500.0, color = PoolBlue) {
             pools.startPayment(PoolPayRequest(rs, feeRate!!)); model.go(Screen.PoolCreate)
         }
     }
@@ -566,7 +652,7 @@ fun PoolCreateScreen(model: WalletModel, state: UiState) {
     val pools = model.pools
     val ui by pools.state.collectAsState()
     val pay = ui.pay
-    val check = pay?.let { PoolPayment.check(it.recipients) }
+    val check = pay?.let { PoolPayment.check(it.recipients, taprootOk = state.taprootXpub != null) }
     val v5 = check != null && !check.ok
     var fromCoins by remember { mutableStateOf(pay == null) }
     var outputsText by remember { mutableStateOf(if (check?.ok == true) check.scripts.size.toString() else "1") }
@@ -629,7 +715,7 @@ fun PoolCreateScreen(model: WalletModel, state: UiState) {
             if (v5) {
                 Text("${formatSats(check.amounts.sum())} sats to ${check.amounts.size} recipient(s) · a shared payment",
                     style = MaterialTheme.typography.titleMedium, color = TextMain)
-                pay.recipients.forEach { (a, v) -> Text(shortAddress(a) + " · " + formatSats(v) + " sats", style = MaterialTheme.typography.bodySmall, color = Purple) }
+                pay.recipients.forEach { (a, v) -> Text(shortAddress(a) + " · " + formatSats(v) + " sats", style = MaterialTheme.typography.bodySmall, color = PoolBlue) }
                 Explain("Each of the others puts in ${formatSats(check.amounts.sum())} sats too and gets it back as equal outputs, while your " +
                     "outputs are the payments. The chain shows the payments as one person's, but not which coins paid them.")
                 Field(outputsText, { outputsText = it.filter { c -> c.isDigit() } }, "equal outputs for each of the others (1–${Protocol.MAX_OUTPUTS})",
@@ -639,7 +725,7 @@ fun PoolCreateScreen(model: WalletModel, state: UiState) {
                 }
             } else {
                 Text("${check.scripts.size} × ${formatSats(check.amount)} sats", style = MaterialTheme.typography.titleMedium, color = TextMain)
-                pay.recipients.forEach { (a, _) -> Text(shortAddress(a), style = MaterialTheme.typography.bodySmall, color = Purple) }
+                pay.recipients.forEach { (a, _) -> Text(shortAddress(a), style = MaterialTheme.typography.bodySmall, color = PoolBlue) }
                 Explain("A pool of exactly this amount opens, and its outputs for you go straight to the recipients: on the chain the " +
                     "payment looks like any other output of the round.")
             }
@@ -676,7 +762,7 @@ fun PoolCreateScreen(model: WalletModel, state: UiState) {
         }
         if (pay == null) Panel { DestChooser(ui, dest) { dest = it }; if (ui.watchKey == null) Explain("Your equal outputs go to fresh addresses of this wallet.") }
         error?.let { Text(reasonText(it), style = MaterialTheme.typography.bodySmall, color = Warn) }
-        PrimaryButton("Open the pool with ${model.unlockName}", Modifier.fillMaxWidth(), enabled = error == null && ui.busy == null) {
+        PrimaryButton("Open the pool with ${model.unlockName}", Modifier.fillMaxWidth(), enabled = error == null && ui.busy == null, color = PoolBlue) {
             pools.create(amount!!, feeRate!!, minPeers!!, peers!!, hours!!, maxInputs!!, outputs!!, password, chosen.toList(), dest, pay) { ok ->
                 if (ok) model.go(Screen.Pools)
             }

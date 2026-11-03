@@ -1,6 +1,22 @@
 package com.kilombino.kilowallet.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Switch
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.layout.ContentScale
+import com.kilombino.kilowallet.app.Tab
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -32,6 +48,12 @@ import com.kilombino.kilowallet.core.chain.Chain
 import com.kilombino.kilowallet.core.chain.NodeEndpoint
 import com.kilombino.kilowallet.core.market.Fiat
 import com.kilombino.kilowallet.core.market.MarketFeed
+import com.kilombino.kilowallet.core.tor.Tor
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.text.font.FontFamily
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -42,7 +64,10 @@ fun SettingsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
     var port by remember { mutableStateOf(state.endpoint.port.toString()) }
     var confirmDelete by remember { mutableStateOf(false) }
     var recipients by remember { mutableStateOf(platform.demoScreen == "recipients") }
+    var nodeOpen by remember { mutableStateOf(false) }
+    var zpubQr by remember { mutableStateOf(false) }
     val hot = state.kind == WalletKind.HOT
+    val poolsOn = model.pools.state.collectAsState().value.enabled
 
     ScreenColumn {
         BackLink("← back to wallet") { model.back() }
@@ -52,18 +77,47 @@ fun SettingsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
         // The app's language: the phone's by default, or one fixed here (each named in its own
         // language), as in the Android app's settings.
         Panel {
-            SectionLabel("Language")
+            SectionLabel("settings")
+            Text("Language", style = MaterialTheme.typography.bodyMedium, color = TextMain)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Chip("Automatic", I18n.choice.value == I18n.AUTO) { I18n.set(I18n.AUTO) }
-                I18n.LANGUAGES.forEach { (code, name) ->
-                    Chip(name, I18n.choice.value == code) { I18n.set(code) }
+                I18n.LANGUAGES.forEach { (code, name) -> Chip(name, I18n.choice.value == code) { I18n.set(code) } }
+            }
+
+            SettingRow("Corecoin (SHA-256 chain)", "The same keys on the SHA-256 chain: balance and addresses. It comes in a later build on iPhone.") {
+                LinkText("OPEN", color = TextFaint) {}
+            }
+            var notify by remember { mutableStateOf(model.watchNotify()) }
+            SettingRow("Tell me when the balance changes", if (notify) "With the app closed, iOS checks now and then (when it decides, not on a fixed schedule) and a notification says what came in, confirmed or went out. Not while the server is reached through Tor."
+                else "Off. With it on, iOS checks now and then with the app closed and notifies what changed.") {
+                Switch(checked = notify, onCheckedChange = { notify = it; model.setWatchNotify(it) })
+            }
+
+            Text("Refresh", style = MaterialTheme.typography.bodyMedium, color = TextMain)
+            Explain("While the app is open")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(30 to "30 s", 60 to "1 min", 300 to "5 min", 0 to "by hand").forEach { (sec, label) ->
+                    Chip(label, state.refreshSeconds == sec) { model.setRefreshSeconds(sec) }
                 }
             }
-        }
 
-        // Values in a currency (Android 1.2.3: 36 of them): one choice for the whole app.
-        Panel {
-            SectionLabel("Currency")
+            if (hot) {
+                val arkOn = model.ark.enabled()
+                SettingRow("Ark", if (arkOn) "On. Instant payments and Lightning through the Paperclip Ark server."
+                    else "Off. Instant payments and Lightning through an Ark server: read how it works first.") {
+                    LinkText(if (arkOn) "OPEN" else "MORE INFO", color = Purple) { model.selectTab(Tab.ARK) }
+                }
+                SettingRow("Kilojoin", if (poolsOn) "On. Shared transactions with other people's coins, in pools with equal outputs."
+                    else "Off. Read how it works first.") {
+                    LinkText(if (poolsOn) "TURN OFF" else "OPEN", color = Purple) {
+                        if (poolsOn) model.pools.setEnabled(false) else model.selectTab(Tab.POOLS)
+                    }
+                }
+            }
+
+            TorSettings(model)
+
+            Text("Currency", style = MaterialTheme.typography.bodyMedium, color = TextMain)
             var more by remember { mutableStateOf(false) }
             val available = Fiat.available(state.market)
             val shown = if (more) available else available.filter { it.code == "USD" || it.code == "EUR" || it.code == state.fiat }
@@ -74,9 +128,8 @@ fun SettingsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
             }
             Explain(if (state.fiat == Fiat.OFF) "No prices: the app asks no price server." else
                 "Prices from ${MarketFeed.SOURCE} (the ECB's daily reference for the exchange rates). The request is the " +
-                    "same for everyone: it carries nothing about your wallet.", color = TextSoft)
+                    "same for everyone: it carries nothing about your wallet.")
             if (state.fiat != Fiat.OFF) KeyValue("price of 1 ${Chain.TICKER}", state.perCoin?.let { Fiat.format(it, state.fiat) } ?: "no price yet")
-        }
 
         Panel {
             SectionLabel("Display unit")
@@ -87,34 +140,77 @@ fun SettingsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
             }
         }
         SecondaryButton("Saved recipients", Modifier.fillMaxWidth()) { recipients = true }
-        Panel {
-            SectionLabel("Electrum server · shared by all wallets")
-            Explain("Your balance and history come from this server, and your sends go through it. It learns your " +
-                "addresses, so for the most privacy point it at your own Fulcrum/Electrs on the ${Chain.DISPLAY} chain. TLS is required for every server.", color = TextSoft)
-            Field(host, { host = it.trim() }, "host")
-            Field(port, { port = it.filter { c -> c.isDigit() } }, "port (TLS)", keyboard = KeyboardType.Number)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PrimaryButton("Use", Modifier.weight(1f), enabled = host.isNotBlank() && port.toIntOrNull() in 1..65535) {
-                    model.setServer(host, port.toIntOrNull()); model.back()
-                }
-                SecondaryButton("Default", Modifier.weight(1f), color = TextMain) {
-                    host = NodeEndpoint.DEFAULT.host; port = NodeEndpoint.DEFAULT.port.toString()
-                    model.setServer("", null)
-                }
-            }
-            KeyValue("in use", state.endpoint.toString() + if (state.endpoint.isCustom) " (yours)" else " (default)")
-            Text("Pinned certificate (SHA-256):", style = MaterialTheme.typography.bodySmall, color = TextSoft)
-            Text(state.pinned?.let { chunked(it) } ?: "none yet — approval required before wallet queries",
-                style = MaterialTheme.typography.bodySmall, color = TextFaint)
-        }
+            Text(if (hot) "Address type for new addresses" else "Address type (derivation)", style = MaterialTheme.typography.bodyMedium, color = TextMain)
+            if (hot) {
+                // Android 1.2.4: both accounts are scanned and spent once Taproot exists; this picks what new addresses are.
+                val tr = state.receiveTaproot
+                LinkText((if (!tr) "● " else "○ ") + "Native SegWit (bc1q)", color = if (!tr) Purple else TextMain) { model.setReceiveTaproot(false) }
+                LinkText((if (tr) "● " else "○ ") + "Taproot (bc1p)", color = if (tr) Purple else TextMain) { model.setReceiveTaproot(true) }
+                Explain("New receive and change addresses. Coins on either kind stay in the wallet and are spent together: " +
+                    "switching never hides one. Kilojoin pools must match the coins' address type.")
+            } else Text("● ${state.scriptType.label}", style = MaterialTheme.typography.bodySmall, color = Purple)
 
-        Panel(accent = if (hot) Purple else Orange) {
-            SectionLabel(if (hot) "Hot wallet" else "Watch-only wallet", if (hot) Purple else Orange)
-            KeyValue("addresses", state.scriptType.label)
-            state.zpub?.let { z ->
-                Text(z, style = MaterialTheme.typography.bodySmall, color = TextFaint)
-                LinkText("copy the public key (zpub)", color = Purple) { clipboard.setText(AnnotatedString(z)) }
+            SettingRow("Gap limit: ${state.gapLimit}", "How many empty addresses in a row are checked before stopping. " +
+                "Raise it if you use many addresses; lower it to scan faster.") {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LinkText("-5", color = Purple) { model.setGapLimit(state.gapLimit - 5) }
+                    LinkText("+5", color = Purple) { model.setGapLimit(state.gapLimit + 5) }
+                }
             }
+            SettingRow("Full rescan", "To go faster, refreshes skip addresses that are already spent and confirmed. " +
+                "If someone pays to an old address again, this finds it (it also runs by itself once a day).") {
+                LinkText("RESCAN", color = Purple) { model.scan(); model.back() }
+            }
+
+            Row(Modifier.fillMaxWidth().clickable { nodeOpen = !nodeOpen }.padding(vertical = 6.dp)) {
+                Text("BTC node & explorer", style = MaterialTheme.typography.bodyMedium, color = TextMain, modifier = Modifier.weight(1f))
+                Text(if (nodeOpen) "▾" else "▸", color = Purple)
+            }
+            if (nodeOpen) {
+                Text("Electrum server", style = MaterialTheme.typography.bodyMedium, color = TextMain)
+                Explain("Your balance and history come from this server, and your sends go through it. It learns your " +
+                    "addresses, so for the most privacy point it at your own Fulcrum/Electrs on the ${Chain.DISPLAY} chain. TLS is required for every server.", color = TextSoft)
+                Field(host, { host = it.trim() }, "host")
+                Field(port, { port = it.filter { c -> c.isDigit() } }, "port (TLS)", keyboard = KeyboardType.Number)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PrimaryButton("Use", Modifier.weight(1f), enabled = host.isNotBlank() && port.toIntOrNull() in 1..65535) {
+                        model.setServer(host, port.toIntOrNull()); model.back()
+                    }
+                    SecondaryButton("Default", Modifier.weight(1f), color = TextMain) {
+                        host = NodeEndpoint.DEFAULT.host; port = NodeEndpoint.DEFAULT.port.toString()
+                        model.setServer("", null)
+                    }
+                }
+                KeyValue("in use", state.endpoint.toString() + if (state.endpoint.isCustom) " (yours)" else " (default)")
+                // Every Electrum server through Tor (a .onion always goes through it), as Android.
+                var viaTor by remember { mutableStateOf(Tor.electrum) }
+                SettingRow("Connect to the server through Tor", if (!Tor.available) "This build has no Tor: a .onion server can't be reached, and this stays off."
+                    else "The server never sees this phone's address. TLS and the pinned certificate stay as they are. " +
+                        "Slower; if Tor doesn't start, nothing is sent without it. Needs iOS 17 or later.") {
+                    Switch(checked = viaTor, enabled = Tor.available, onCheckedChange = { viaTor = it; model.setElectrumThroughTor(it) })
+                }
+                Text("Pinned certificate (SHA-256):", style = MaterialTheme.typography.bodySmall, color = TextSoft)
+                Text(state.pinned?.let { chunked(it) } ?: "none yet — approval required before wallet queries",
+                    style = MaterialTheme.typography.bodySmall, color = TextFaint)
+            }
+
+            state.zpub?.let { z ->
+                Text(shortAddress(z), style = MaterialTheme.typography.bodySmall, color = TextFaint)
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    LinkText("SHOW ZPUB (QR)", color = Purple) { zpubQr = true }
+                    LinkText("copy the public key (zpub)", color = Purple) { clipboard.setText(AnnotatedString(z)) }
+                }
+            }
+
+            SettingRow("Street mode", "On: balances and amounts are hidden every time the app opens, until you unlock them " +
+                "with the eye. Off: they always show (turning it off asks for your fingerprint).") {
+                Switch(checked = state.streetMode, onCheckedChange = { model.setStreetMode(it) })
+            }
+
+            Text("Backup file", style = MaterialTheme.typography.bodyMedium, color = TextMain)
+            Explain(if (hot) "One encrypted file with your words, settings, Ark wallet and Lightning channel backup, the same format as Kilowallet for Android: it restores on either."
+                else "The backup file holds a spending wallet's words: switch to the hot wallet to save one.")
+            SecondaryButton("SAVE A BACKUP FILE", Modifier.fillMaxWidth(), enabled = hot) { model.go(com.kilombino.kilowallet.app.Screen.Backup) }
             if (hot) {
                 Explain(state.backupCheckedAt?.let { "Backup last verified: " + syncTimeText(it) } ?: "Written backup has not been checked on this device.")
                 SecondaryButton("Check written backup", Modifier.fillMaxWidth(), color = TextMain) { model.startBackupCheck() }
@@ -123,12 +219,15 @@ fun SettingsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
             SecondaryButton("Remove this wallet", Modifier.fillMaxWidth(), color = Bad) { confirmDelete = true }
         }
 
+        if (hot) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            LinkText("RECOVERY WORDS", color = TextMain) { model.revealWords() }
+        }
+
         Panel {
             SectionLabel("About")
             Text("Kilowallet for iOS ${platform.appVersion}", style = MaterialTheme.typography.bodyMedium, color = TextMain)
             Explain("A self-custodial wallet for Bitcoin on the ${Chain.DISPLAY} proof-of-work chain (${Chain.TICKER}). " +
-                "No account, no analytics, no tracking. The app contacts only the Electrum server above and, unless " +
-                "the currency is off, the price feed; opening a transaction on the explorer is done in your browser, only when you tap it.", color = TextSoft)
+                "No account, no analytics, no tracking. The app uses your selected Electrum server and optional price, Kilojoin, Ark, Lightning, bridge, watchtower and Tor services; opening a transaction on the explorer is done in your browser, only when you tap it.", color = TextSoft)
             Text("Created by Kilombino", style = MaterialTheme.typography.bodyMedium, color = TextMain)
             Explain("Original project by Kilombino. This iOS distribution is maintained by romanmodin. Apache License 2.0.")
             Explain("Balances and confirmation counts rely on your selected server. Recent payment proofs check individual headers; the app does not independently validate the highest-work chain.")
@@ -136,6 +235,29 @@ fun SettingsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
             LinkText("github.com/Kilombino/kilowallet-ios", color = Purple) { runCatching { uri.openUri("https://github.com/Kilombino/kilowallet-ios") } }
             LinkText("kilombino.com", color = Purple) { runCatching { uri.openUri("https://kilombino.com") } }
         }
+    }
+
+    if (zpubQr) state.zpub?.let { z ->
+        AlertDialog(
+            onDismissRequest = { zpubQr = false },
+            title = { Text("Show the public key", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    platform.qrImage(z)?.let { qr ->
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Color.White).padding(12.dp)) {
+                                Image(qr, contentDescription = "QR code of the address", modifier = Modifier.size(220.dp),
+                                    contentScale = ContentScale.Fit, filterQuality = FilterQuality.None)
+                            }
+                        }
+                    }
+                    Text(z, style = MaterialTheme.typography.bodySmall, color = TextSoft)
+                    Explain("Anyone with it sees every address and payment of this wallet (but cannot spend).")
+                }
+            },
+            confirmButton = { TextButton(onClick = { zpubQr = false }) { Text("CLOSE", color = TextSoft) } },
+            containerColor = PanelBg, titleContentColor = TextMain, textContentColor = TextSoft,
+        )
     }
 
     if (recipients) RecipientsDialog(model, state, onClose = { recipients = false })
@@ -151,4 +273,72 @@ fun SettingsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("CANCEL", color = TextSoft) } },
         containerColor = PanelBg, titleContentColor = TextMain, textContentColor = TextSoft,
     )
+}
+
+/**
+ * Tor (Android 1.4.4: Arti in the app): whether it runs and why not, "Only over Tor" and its log.
+ * Android keeps the switch and the log under the Telegram alerts, which iOS doesn't have; here
+ * they are general, and "Only over Tor" also makes Lightning wait for Tor.
+ */
+@Composable
+private fun TorSettings(model: WalletModel) {
+    var st by remember { mutableStateOf(Tor.status()) }
+    LaunchedEffect(Unit) { while (true) { st = Tor.status(); delay(1_000) } }
+    var only by remember { mutableStateOf(Tor.only) }
+    Text("Tor", style = MaterialTheme.typography.bodyMedium, color = TextMain)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        PulseDot(when { !Tor.available -> TextFaint; st.state == 2 -> Good; st.state == 1 -> Warn; st.wanted -> Bad; else -> TextFaint })
+        Spacer(Modifier.width(8.dp))
+        Text(when {
+            !Tor.available -> "This build has no Tor."
+            st.state == 2 -> "On · SOCKS 127.0.0.1:${st.port}"
+            st.state == 1 -> "Connecting…"
+            st.wanted -> "Stopped"
+            else -> "Not running"
+        }, style = MaterialTheme.typography.bodySmall, color = TextSoft)
+    }
+    if (Tor.available) {
+        if (st.state != 2 && st.line.isNotBlank()) Text(st.line, style = MaterialTheme.typography.bodySmall, color = TextFaint)
+        Explain(if (st.state == 2) "Lightning reaches Kilombino's watchtower and onion peers through it; the pools' relay, the inbound " +
+            "channel service and the explorer go through it while it runs."
+            else "Tor (Arti, the Tor Project's Tor) runs inside the app when something needs it: Lightning, a .onion server, " +
+                "or the server through Tor.")
+        SettingRow("Only over Tor", if (only) "What goes over Tor waits for it: Lightning doesn't start without Tor, and says why if Tor doesn't come up. Nothing is sent over the clear net instead."
+            else "If Tor doesn't come up in a minute, Lightning starts without it (no watchtower), as on Android.") {
+            Switch(checked = only, onCheckedChange = { only = it; model.setTorOnly(it) })
+        }
+        LinkText("SHOW TOR'S LOG", color = Purple) { model.go(com.kilombino.kilowallet.app.Screen.TorLog) }
+    }
+}
+
+/** The end of Tor's log (Arti's own, without addresses or keys), to read and copy. */
+@Composable
+fun TorLogScreen(model: WalletModel) {
+    val clipboard = LocalClipboardManager.current
+    var log by remember { mutableStateOf(if (Tor.available) Tor.logTail() else "") }
+    LaunchedEffect(Unit) { while (true) { delay(2_000); if (Tor.available) log = Tor.logTail() } }
+    // The newest lines are at the end: the screen opens there and follows them as they come.
+    val scroll = androidx.compose.foundation.rememberScrollState()
+    LaunchedEffect(log, scroll.maxValue) { scroll.scrollTo(scroll.maxValue) }
+    ScreenColumn(scroll) {
+        BackLink("← back") { model.back() }
+        Panel {
+            SectionLabel("Tor's log")
+            Explain("Arti's own log, the last lines. It has no addresses or keys (safe logging): copy it to send it when Tor doesn't come up.")
+            Text(log.ifBlank { "(Tor has not run yet)" }, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), color = TextSoft)
+            SecondaryButton("COPY THE LOG", Modifier.fillMaxWidth(), enabled = log.isNotBlank()) { clipboard.setText(AnnotatedString(log)) }
+        }
+    }
+}
+
+/** A setting: its name and what it does on the left, its control on the right (Android's rows). */
+@Composable
+private fun SettingRow(title: String, explain: String, control: @Composable () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 10.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = TextMain)
+            Explain(explain)
+        }
+        control()
+    }
 }

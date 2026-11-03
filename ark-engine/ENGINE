@@ -1,0 +1,16 @@
+# The Ark engine: the Paperclip/bark wallet daemon and its REST API as a static library for iOS
+# (KilombinoArk.xcframework), the same sources as Kilowallet Android 1.4.4's libkilombino_ark.so
+# (its ark-engine/ENGINE: commit 349d199) plus the C functions iOS calls (iOS-only code).
+# .github/workflows/ark-ios.yml builds it from `commit` of `repo`; the app's build fetches that
+# run's artifact and checks it against sha256 before linking it.
+repo=https://github.com/Kilombino/paperclip-wallet-app
+branch=kilombino-ios
+commit=fe7cccd73bdb0b44312a56b65c01b33823c264b6
+base=kilombino-esplora 349d199 (Android 1.4.4's engine)
+build=kilombino-ark/build-ios.sh
+rustc=1.98.0
+iosversion=16.0
+run=41278303674
+sha256=e1be8ad8cb45e1917026f1287bdfc1ef2adec1319829271ce02b067fc0ca5647
+size=109 MB unpacked (device arm64 37 MB, simulator arm64+x86_64 71 MB); zip 40 MB; build 18 min on macos-15
+release=v1.0.0-rc1

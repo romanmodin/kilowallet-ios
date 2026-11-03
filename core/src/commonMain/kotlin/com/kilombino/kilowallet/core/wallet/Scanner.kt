@@ -8,6 +8,7 @@ import com.kilombino.kilowallet.core.chain.TransportFactory
 import com.kilombino.kilowallet.core.crypto.Address
 import com.kilombino.kilowallet.core.crypto.Bip32
 import com.kilombino.kilowallet.core.crypto.BlockHeader
+import com.kilombino.kilowallet.core.crypto.Hashes
 import com.kilombino.kilowallet.core.crypto.ScriptType
 import com.kilombino.kilowallet.core.crypto.TxParse
 import com.kilombino.kilowallet.core.platform.ioDispatcher
@@ -27,6 +28,8 @@ data class AddressRow(
     val confirmed: Long = 0,
     val unconfirmed: Long = 0,
     val txCount: Int = 0,
+    /** Set for an address of the hot wallet's second account (Taproot, BIP-86); null = the wallet's own type. */
+    val type: ScriptType? = null,
 ) {
     val total: Long get() = confirmed + unconfirmed
     val isUsed: Boolean get() = txCount > 0 || total > 0
@@ -56,6 +59,8 @@ data class TxConf(val txid: String, val confirmations: Int, val pending: Boolean
 data class SpendableUtxo(
     val txid: String, val vout: Int, val value: Long,
     val chainIndex: Int, val index: Int, val height: Int,
+    /** Taproot coin of a hot wallet's second account; null = the wallet's own type. */
+    val type: ScriptType? = null,
 )
 
 /**
@@ -78,19 +83,27 @@ class Scanner(
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val worker = dispatcher.limitedParallelism(1)
 
-    fun scan(xpub: String, endpoint: NodeEndpoint, pinnedFingerprint: String?, gap: Int = gapLimit,
-        knownReceiveCount: Int = 0, knownChangeCount: Int = 0): Flow<ScanEvent> = flow {
+    /**
+     * [xpub]: the wallet's account, read as [type] when given (a Taproot watch-only key is a plain
+     * xpub); [taprootXpub]: a hot wallet's BIP-86 account, scanned after the main one once Taproot
+     * is on, as the Android app does.
+     */
+    fun scan(
+        xpub: String, endpoint: NodeEndpoint, pinnedFingerprint: String?, gap: Int = gapLimit,
+        knownReceiveCount: Int = 0, knownChangeCount: Int = 0,
+        type: ScriptType? = null, taprootXpub: String? = null,
+    ): Flow<ScanEvent> = flow {
         if (gap !in 1..1000 || knownReceiveCount !in 0..10_000 || knownChangeCount !in 0..10_000) {
             emit(ScanEvent.Failed("Invalid address scan range")); return@flow
         }
         val txHeights = HashMap<String, Int>()
-        val parsed = try {
-            Bip32.parseExtendedPubKey(xpub)
+        val accounts = try {
+            val main = Bip32.parseExtendedPubKey(xpub).let { if (type != null) it.withType(type) else it }
+            listOf(main to null as ScriptType?) +
+                (taprootXpub?.let { listOf(Bip32.parseExtendedPubKey(it).withType(ScriptType.P2TR) to ScriptType.P2TR) } ?: emptyList())
         } catch (e: IllegalArgumentException) {
             emit(ScanEvent.Failed(e.message ?: "Invalid extended key")); return@flow
         }
-        val scriptType = parsed.scriptType
-        val purpose = purposeFor(scriptType)
 
         emit(ScanEvent.Connecting(endpoint))
         val client = client(endpoint, pinnedFingerprint)
@@ -108,7 +121,9 @@ class Scanner(
         try {
             val height = client.blockHeight()
             emit(ScanEvent.Connected(client.serverVersion ?: "unknown", height, client.serverFingerprint))
-            for (chainIndex in 0..1) {
+            for ((parsed, rowType) in accounts) for (chainIndex in 0..1) {
+                val scriptType = parsed.scriptType
+                val purpose = purposeFor(scriptType)
                 val branch = Bip32.deriveChild(parsed, chainIndex)
                 var index = 0
                 var consecutiveEmpty = 0
@@ -133,7 +148,7 @@ class Scanner(
                         // only when that status differs from the one remembered with them.
                         val entryData = resolve(client, endpoint, scriptHash, statuses[k])
                         val row = AddressRow(chainIndex, i, address, path, scriptHash,
-                            entryData.balance.confirmed, entryData.balance.unconfirmed, entryData.history.size)
+                            entryData.balance.confirmed, entryData.balance.unconfirmed, entryData.history.size, rowType)
                         index = i + 1
                         if (row.isUsed) {
                             rows += row
@@ -225,17 +240,58 @@ class Scanner(
             client.connect()
             // One round trip per 50 addresses, not one per address.
             val all = client.listUnspentMany(rows.map { it.scriptHash }).zip(rows).flatMap { (us, r) ->
-                us.map { SpendableUtxo(it.txid, it.vout, it.value, r.chainIndex, r.index, it.height) }
+                us.map { SpendableUtxo(it.txid, it.vout, it.value, r.chainIndex, r.index, it.height, r.type) }
             }
             SendPlanner.validateCoins(all)
             val tip = client.blockHeight()
             all.filter { u ->
-                if (u.height <= 0 || tip - u.height + 1 >= LONG_MATURITY) return@filter true
+                if (!mayBeImmature(u.height, tip)) return@filter true
                 val tx = txCache[u.txid] ?: runCatching { TxParse.parse(client.transaction(u.txid)) }.getOrNull()
                     ?.also { txCache[u.txid] = it } ?: return@filter false
                 val coinbase = tx.inputs.size == 1 && tx.inputs[0].txid.all { it == '0' } && tx.inputs[0].vout == -1
-                !coinbase || tip - u.height + 1 >= maturityFor(u.height)
+                !immature(coinbase, u.height, tip)
             }
+        } finally {
+            client.close()
+        }
+    }
+
+    /** A mined reward still locked, and the first block it can be spent at. */
+    data class ImmatureCoin(val coin: SpendableUtxo, val maturesAt: Int)
+
+    /** The wallet's immature mined rewards at [tip], and how long blocks have been taking lately (seconds). */
+    data class Immature(val tip: Int, val coins: List<ImmatureCoin>, val secondsPerBlock: Double) {
+        val total: Long get() = coins.sumOf { it.coin.value }
+        /** Roughly when block [height] comes (epoch seconds), from the recent pace. */
+        fun eta(height: Int, now: Long): Long = now + ((height - tip).coerceAtLeast(0) * secondsPerBlock).toLong()
+        fun of(u: SpendableUtxo): ImmatureCoin? = coins.firstOrNull { it.coin.txid == u.txid && it.coin.vout == u.vout }
+    }
+
+    /**
+     * Every immature mined reward in [rows] (what [gatherUtxos] leaves out of spending), for showing:
+     * the coins of the addresses, the transactions only of those young enough to be one (cached), and
+     * the pace of the last day's blocks for the dates (Android app `Scanner.immature`, 1.4.0).
+     */
+    suspend fun immature(rows: List<AddressRow>, endpoint: NodeEndpoint, pinnedFingerprint: String?): Immature = withContext(worker) {
+        val client = client(endpoint, pinnedFingerprint)
+        try {
+            client.connect()
+            val all = client.listUnspentMany(rows.map { it.scriptHash }).zip(rows).flatMap { (us, r) ->
+                us.map { SpendableUtxo(it.txid, it.vout, it.value, r.chainIndex, r.index, it.height, r.type) }
+            }
+            val tip = client.blockHeight()
+            val coins = all.filter { mayBeImmature(it.height, tip) }.mapNotNull { u ->
+                val tx = txCache[u.txid] ?: runCatching { TxParse.parse(client.transaction(u.txid)) }.getOrNull()
+                    ?.also { txCache[u.txid] = it } ?: return@mapNotNull null
+                val coinbase = tx.inputs.size == 1 && tx.inputs[0].txid.all { it == '0' } && tx.inputs[0].vout == -1
+                if (immature(coinbase, u.height, tip)) ImmatureCoin(u, maturesAt(u.height)) else null
+            }
+            val pace = if (coins.isEmpty()) DEFAULT_BLOCK_SECONDS else runCatching {
+                val span = minOf(144, tip - 1)
+                val t1 = blockTime(client.blockHeader(tip)); val t0 = blockTime(client.blockHeader(tip - span))
+                ((t1 - t0).toDouble() / span).takeIf { it in 30.0..86_400.0 }
+            }.getOrNull() ?: DEFAULT_BLOCK_SECONDS
+            Immature(tip, coins.sortedBy { it.maturesAt }, pace)
         } finally {
             client.close()
         }
@@ -248,8 +304,10 @@ class Scanner(
      */
     suspend fun verifyCoins(
         xpub: String, coins: List<SpendableUtxo>, endpoint: NodeEndpoint, pinnedFingerprint: String?,
+        type: ScriptType? = null, taprootXpub: String? = null,
     ) = withContext(worker) {
-        val parsed = Bip32.parseExtendedPubKey(xpub)
+        val main = Bip32.parseExtendedPubKey(xpub).let { if (type != null) it.withType(type) else it }
+        val taproot = taprootXpub?.let { Bip32.parseExtendedPubKey(it).withType(ScriptType.P2TR) }
         val c = client(endpoint, pinnedFingerprint)
         try {
             c.connect()
@@ -258,6 +316,7 @@ class Scanner(
                 val tx = txs.getOrPut(u.txid) { TxParse.parse(c.transaction(u.txid)) }
                 val out = tx.outputs.getOrNull(u.vout)
                     ?: error("The server listed a coin that does not exist (${u.txid.take(8)}…:${u.vout}). Nothing was signed.")
+                val parsed = if (u.type == ScriptType.P2TR && taproot != null) taproot else main
                 val script = Address.scriptPubKey(Bip32.derivePath(parsed, u.chainIndex, u.index).pubkey(), parsed.scriptType)
                 require(out.value == u.value && out.scriptPubKey.contentEquals(script)) {
                     "The server's data about a coin (${u.txid.take(8)}…:${u.vout}) does not match the transaction itself. " +
@@ -290,9 +349,41 @@ class Scanner(
                     ?: error("The server listed a coin that does not exist (${i.txid.take(8)}…:${i.vout}).")
                 val row = byHash[Address.electrumScriptHash(prev.scriptPubKey)]
                     ?: error("This transaction spends coins that are not in this wallet: it can't be replaced from here.")
-                SpendableUtxo(i.txid, i.vout, prev.value, row.chainIndex, row.index, 0)
+                SpendableUtxo(i.txid, i.vout, prev.value, row.chainIndex, row.index, 0, row.type)
             }
             tx to coins
+        } finally { c.close() }
+    }
+
+    /**
+     * What a CPFP of unconfirmed [txid] needs (Android app: `prepareCpfp`): its fee and checked size,
+     * and its unspent outputs to this wallet's [rows]. Every transaction is checked against its txid;
+     * fails when the parent itself spends unconfirmed coins (speed up the earlier one first).
+     */
+    suspend fun cpfpParent(
+        txid: String, rows: List<AddressRow>, endpoint: NodeEndpoint, pinnedFingerprint: String?,
+    ): Triple<Long, Int, List<SpendableUtxo>> = withContext(worker) {
+        val c = client(endpoint, pinnedFingerprint)
+        try {
+            c.connect()
+            fun fetch(id: String): Pair<String, TxParse.Tx> = c.transaction(id).let { raw ->
+                raw to TxParse.parse(raw).also { require(TxParse.txid(it) == id) { "The server sent a different transaction than the one asked for (${id.take(8)}…)." } }
+            }
+            val (raw, tx) = fetch(txid)
+            val prevs = tx.inputs.map { i -> i to (fetch(i.txid).second.outputs.getOrNull(i.vout) ?: error("The server listed a coin that does not exist.")) }
+            val parentFee = prevs.sumOf { it.second.value } - tx.outputs.sumOf { it.value }
+            val unconfirmedAncestor = prevs.any { (i, o) ->
+                c.history(Address.electrumScriptHash(o.scriptPubKey)).firstOrNull { it.txid == i.txid }?.let { it.height <= 0 } ?: false
+            }
+            require(!unconfirmedAncestor) { "This transaction spends coins that are not confirmed yet either: speed up the earlier one first." }
+            val byHash = rows.associateBy { it.scriptHash }
+            val unspent = c.listUnspentMany(rows.filter { it.isUsed }.map { it.scriptHash }).flatten().map { "${it.txid}:${it.vout}" }.toSet()
+            val ours = tx.outputs.mapIndexedNotNull { n, o ->
+                val row = byHash[Address.electrumScriptHash(o.scriptPubKey)] ?: return@mapIndexedNotNull null
+                if ("$txid:$n" !in unspent) return@mapIndexedNotNull null
+                SpendableUtxo(txid, n, o.value, row.chainIndex, row.index, 0, row.type)
+            }
+            Triple(parentFee, CpfpPlanner.parentVsize(raw, prevs.map { it.second.scriptPubKey }), ours)
         } finally { c.close() }
     }
 
@@ -356,14 +447,51 @@ class Scanner(
         /** The easiest block a payment proof is accepted from (Android app value). */
         const val SPV_FLOOR_BITS = 0x191b0540L
         const val SPV_WINDOW = 144
-        /** Coinbase maturity on the BLAKE2b chain: blocks 973 440–979 919 wait 6 480 confirmations. */
-        const val LONG_MATURITY = 6480
-        fun maturityFor(height: Int): Int = if (height in 973_440..979_919) LONG_MATURITY else 100
+        /**
+         * Coinbase maturity on the BLAKE2b chain, as Knots 29.4.3 relays a spend of it (knots#468;
+         * Android app `Scanner.maturityFor`, pinned by [MaturityVectors]): rewards mined in blocks
+         * 973 440–979 918 keep their 6 480 confirmations; from 979 919, while the median time past
+         * of the block before is under 2027-09-01 00:00 UTC (RDTS expiry), each waits 25 920 (about
+         * 180 days, counted from its own block); any other, 100.
+         */
+        const val HISTORICAL_MATURITY = 6480
+        const val LONG_MATURITY = 25920
+        const val LONG_START = 979_919
+
+        /**
+         * The rewards mined after the expiry date need only 100 again, but which block that is is only
+         * known from the chain's times: until then every reward from [LONG_START] counts as covered, the
+         * same as the node does for a block it does not know.
+         */
+        fun maturityFor(height: Int): Int = when {
+            height >= LONG_START -> LONG_MATURITY
+            height >= 973_440 -> HISTORICAL_MATURITY
+            else -> 100
+        }
+
+        /** The first tip at which a reward mined at [height] can be spent (as [gatherUtxos] counts it). */
+        fun maturesAt(height: Int): Int = height + maturityFor(height) - 1
+
+        /** A coin at [height] is young enough at [tip] that, if it is a mined reward, it can't be spent yet. */
+        fun mayBeImmature(height: Int, tip: Int): Boolean = height > 0 && tip - height + 1 < LONG_MATURITY
+
+        /** Whether a coin at [height] (a mined reward when [coinbase]) is still locked at [tip]. */
+        fun immature(coinbase: Boolean, height: Int, tip: Int): Boolean = coinbase && height > 0 && tip - height + 1 < maturityFor(height)
+
+        /** Seconds per block when the pace can't be read: ten minutes. */
+        const val DEFAULT_BLOCK_SECONDS = 600.0
+
+        /** A header's time (bytes 68–71, little-endian), the same in an 80- and a 164-byte header. */
+        fun blockTime(headerHex: String): Long {
+            val b = Hashes.hexToBytes(headerHex)
+            return (0 until 4).fold(0L) { a, i -> a or ((b[68 + i].toLong() and 0xff) shl (8 * i)) }
+        }
 
         fun purposeFor(type: ScriptType): Int = when (type) {
             ScriptType.P2PKH -> 44
             ScriptType.P2SH_P2WPKH -> 49
             ScriptType.P2WPKH -> 84
+            ScriptType.P2TR -> 86
         }
     }
 }

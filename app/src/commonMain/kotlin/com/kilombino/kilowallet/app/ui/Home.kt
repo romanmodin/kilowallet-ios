@@ -18,7 +18,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +34,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import com.kilombino.kilowallet.core.kilojoin.NostrEvent
+import com.kilombino.kilowallet.core.wallet.Scanner
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import com.kilombino.kilowallet.app.AppPlatform
 import com.kilombino.kilowallet.app.ScanPhase
 import com.kilombino.kilowallet.app.Screen
+import com.kilombino.kilowallet.app.Tab
 import com.kilombino.kilowallet.app.UiState
 import com.kilombino.kilowallet.app.WalletKind
 import com.kilombino.kilowallet.app.WalletModel
@@ -61,8 +69,36 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun HomeScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
-    // While the wallet is on screen it re-checks every minute (Android does the same in the foreground).
-    LaunchedEffect(state.zpub) { while (true) { delay(60_000); model.refresh() } }
+    // While the wallet is on screen it refreshes on the interval chosen in settings (Android: 30 s / 1 / 5 min / by hand).
+    LaunchedEffect(state.zpub, state.refreshSeconds) {
+        if (state.refreshSeconds <= 0) return@LaunchedEffect
+        while (true) { model.scheduleRefresh(); delay(state.refreshSeconds * 1000L); model.refresh() }
+    }
+    if (state.locked) { LockedScreen(model, platform); return }
+    val hot = state.kind == WalletKind.HOT
+    // A watch-only wallet stays that: no Lightning, no Kilojoin, no Ark (it cannot sign), as on Android.
+    val tab = if (hot && !state.simple) state.tab else Tab.BTC
+
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp), verticalArrangement = Arrangement.spacedBy(Gap)) {
+            LinkText(state.walletName + "  ▾ wallets") { model.go(Screen.Wallets) }
+            WalletHeader(model, state, platform)
+            if (!state.simple) MainTabs(tab, hot) { model.selectTab(it) }
+        }
+        Box(Modifier.weight(1f)) {
+            when {
+                state.simple -> SimpleHome(model, state)
+                tab == Tab.LIGHTNING -> TabColumn { LightningTab(model, state, platform) }
+                tab == Tab.POOLS -> PoolsScreen(model, state, platform, embedded = true)
+                tab == Tab.ARK -> TabColumn { ArkTab(model, state, platform) }
+                else -> BtcTab(model, state.copy(hideAmounts = state.hideAmounts || state.hidden), platform)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BtcTab(model: WalletModel, state: UiState, platform: AppPlatform) {
     var detail by remember(state.walletId) { mutableStateOf<TxConf?>(null) }
     var exportConfirm by remember { mutableStateOf(platform.demoScreen == "export") }
     LaunchedEffect(platform.demoScreen, state.txs) {
@@ -86,6 +122,7 @@ fun HomeScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
             Spacer(Modifier.width(8.dp))
             Logo(40)
         }
+        if (!hot) Explain("Watch-only: this wallet has no keys. A send is signed elsewhere (SeedSigner, Sparrow…) from a PSBT.")
 
         LinkText(if (state.hideAmounts) "Show amounts" else "Hide amounts", color = TextSoft) { model.toggleHideAmounts() }
         Panel {
@@ -152,7 +189,7 @@ fun HomeScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
                 Explain("${matching.size} of ${state.txs.size} loaded movements")
             }
             if (state.txs.isEmpty()) {
-                Explain(if (state.scan is ScanPhase.Done) "No movements yet. Receive to an address from RECEIVE." else "…")
+                Explain("No movements yet. Receive to an address from RECEIVE.")
             } else {
                 Explain("tap a movement for its details")
                 if (matching.isEmpty()) Explain("No matching movements.")
@@ -180,8 +217,143 @@ fun HomeScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
     )
 }
 
+/** How the look is going, right under the tabs and above the balance it explains (Android `ScanStatus`). */
 @Composable
-private fun MovementRow(tx: TxConf, hidden: Boolean, note: TransactionNote?, unit: AmountUnit, canReplace: Boolean, onReplace: (Boolean) -> Unit, onClick: () -> Unit) {
+private fun ScanStatus(model: WalletModel, state: UiState) {
+    Panel {
+        when (val s = state.scan) {
+            ScanPhase.Idle -> Row(verticalAlignment = Alignment.CenterVertically) {
+                PulseDot(Purple); Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("connecting to ${state.endpoint}", style = MaterialTheme.typography.bodyMedium, color = Purple)
+                    Explain("The first connection can take a little while.")
+                }
+            }
+            is ScanPhase.Scanning -> Row(verticalAlignment = Alignment.CenterVertically) {
+                GapRing(s.gap, s.gapLimit, Purple)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (s.path.isEmpty()) "connecting to ${state.endpoint}" else s.path,
+                        style = MaterialTheme.typography.bodyMedium, color = Purple)
+                    Text(if (s.chainIndex == 0) "receive chain" else "change chain", style = MaterialTheme.typography.bodySmall, color = TextFaint)
+                    Text("${s.gap}/${s.gapLimit} empty in a row", style = MaterialTheme.typography.bodySmall, color = TextSoft)
+                }
+            }
+            ScanPhase.Done -> Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PulseDot(Good); Spacer(Modifier.width(10.dp))
+                    Text("scan complete", style = MaterialTheme.typography.bodyMedium, color = Good)
+                }
+                if (state.refreshing) Text("refreshing…", style = MaterialTheme.typography.bodySmall, color = Purple)
+                Spacer(Modifier.height(6.dp))
+                Text("server: ${state.endpoint}" + (state.serverVersion?.let { " · $it" } ?: ""),
+                    style = MaterialTheme.typography.bodySmall, color = TextSoft)
+                state.pinned?.let { Text("pinned fingerprint: ${it.take(16)}…", style = MaterialTheme.typography.bodySmall, color = TextFaint) }
+            }
+            is ScanPhase.Error -> Column {
+                Text("could not complete", style = MaterialTheme.typography.bodyMedium, color = Bad)
+                Explain(s.message)
+                LinkText("retry", color = Purple) { model.scan() }
+            }
+        }
+    }
+}
+
+/** The balance in sats (an exact count), in ₿ and in the chosen currency, as Android's `BalanceCard`. */
+@Composable
+internal fun BalanceCard(model: WalletModel, state: UiState) {
+    var now by remember { mutableStateOf(0L) }
+    LaunchedEffect(state.nextRefreshAt) { while (true) { now = nowMillis(); delay(1_000) } }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionLabel("BTC balance")
+            Spacer(Modifier.weight(1f))
+            LinkText(if (state.hidden) "👁 show" else "🙈 hide", color = TextSoft) { model.toggleHidden() }
+            if (state.scan is ScanPhase.Done) {
+                Spacer(Modifier.width(8.dp))
+                val left = ((state.nextRefreshAt - now) / 1000).toInt().coerceAtLeast(0)
+                Text(if (state.nextRefreshAt <= 0L) "↻ by hand" else if (left >= 60) "↻ ${left / 60}:${(left % 60).toString().padStart(2, '0')}" else "↻ ${left}s",
+                    style = MaterialTheme.typography.bodySmall, color = TextFaint)
+                Spacer(Modifier.width(8.dp))
+                PulseDot(Good, 7)
+            }
+        }
+        if (state.hidden) Text(MASK, style = MaterialTheme.typography.headlineMedium, color = Purple)
+        else Row(verticalAlignment = Alignment.Bottom) {
+            Text(formatSats(state.total), fontSize = BigNumber, fontWeight = FontWeight.Bold, color = Purple,
+                style = MaterialTheme.typography.displayLarge)
+            Text(" sats", style = MaterialTheme.typography.titleLarge, color = Purple.copy(alpha = 0.7f),
+                modifier = Modifier.padding(bottom = 8.dp))
+        }
+        Text(if (state.hidden) MASK else formatBtc(state.total) + " ₿", style = MaterialTheme.typography.bodySmall, color = TextFaint)
+        if (state.fiat != Fiat.OFF) Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (state.hidden) "≈ $MASK" else "≈ " + (state.perCoin?.let { Fiat.format(it * state.total / 1e8, state.fiat) } ?: Fiat.missing(state.fiat)),
+                style = MaterialTheme.typography.titleLarge, color = TextMain, modifier = Modifier.weight(1f))
+            FiatChips(model, state)
+        }
+        if (state.unconfirmed != 0L && !state.hidden) Text("of which ${formatSats(state.unconfirmed)} sats unconfirmed",
+            style = MaterialTheme.typography.bodySmall, color = Warn)
+        ImmatureBalanceNote(model, state)
+        Spacer(Modifier.height(4.dp))
+        Text("${state.rows.count { it.isUsed }} used addresses · height ${state.height}", style = MaterialTheme.typography.bodySmall, color = TextSoft)
+        Text(state.scriptType.label, style = MaterialTheme.typography.bodySmall, color = TextFaint)
+        Text(state.scriptType.explain, style = MaterialTheme.typography.bodySmall, color = TextFaint)
+        Explain("BTC: Bitcoin with BLAKE2b proof of work. 164-byte headers.")
+    }
+}
+
+/** Roughly the day block [height] comes, from the recent pace (Android's `approxDay`). */
+internal fun approxDay(im: Scanner.Immature, height: Int): String =
+    civilDay(im.eta(height, NostrEvent.nowSeconds()) / 86400).let { (y, m, d) -> "$y-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}" }
+
+/** A movement's line when it made a mined reward still locked: from which block it can be spent, and about when. */
+internal fun immatureLine(im: Scanner.Immature, c: Scanner.ImmatureCoin): String =
+    "⛏ mined reward · matures at block ${c.maturesAt} (~${approxDay(im, c.maturesAt)})"
+
+/**
+ * Under the balance: how much of it is mined rewards still locked (the balance counts them, SEND
+ * can't spend them yet), and until when. Nothing when there are none. Looked up again when the
+ * balance or the tip moves (Android 1.4.0 `ImmatureBalanceNote`).
+ */
+@Composable
+private fun ImmatureBalanceNote(model: WalletModel, state: UiState) {
+    LaunchedEffect(state.zpub, state.height, state.total, state.rows.size) { model.refreshImmature() }
+    val im by model.immature.collectAsState()
+    val i = im ?: return
+    if (i.coins.isEmpty() || state.hidden) return
+    val first = i.coins.first(); val last = i.coins.last()
+    Text(if (first.maturesAt == last.maturesAt)
+        "of which ${formatSats(i.total)} sats are mined rewards still locked (until block ${last.maturesAt}, ~${approxDay(i, last.maturesAt)})"
+        else "of which ${formatSats(i.total)} sats are mined rewards still locked: the next unlocks at block ${first.maturesAt} " +
+            "(~${approxDay(i, first.maturesAt)}), the last at block ${last.maturesAt} (~${approxDay(i, last.maturesAt)})",
+        style = MaterialTheme.typography.bodySmall, color = Warn)
+}
+
+/** USD · EUR · ▾ by the value, as Android's `FiatPicker` (▾ opens the full list in settings). */
+@Composable
+private fun FiatChips(model: WalletModel, state: UiState) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Chip("USD", state.fiat == "USD") { model.setFiat("USD") }
+        Chip("EUR", state.fiat == "EUR") { model.setFiat("EUR") }
+        val other = state.fiat != "USD" && state.fiat != "EUR"
+        Chip(if (other) "${state.fiat} ▾" else "▾", other) { model.go(Screen.Settings) }
+    }
+}
+
+/** What street mode shows in place of an amount. */
+internal const val MASK = "••••"
+
+/** The main screen's content: scrolls on its own under the fixed header and tabs. */
+@Composable
+internal fun TabColumn(content: @Composable () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(Gap),
+    ) { content(); Spacer(Modifier.height(30.dp)) }
+}
+
+@Composable
+private fun MovementRow(tx: TxConf, hidden: Boolean, note: TransactionNote?, unit: AmountUnit, canReplace: Boolean, onReplace: (Boolean) -> Unit, immature: String? = null, canCpfp: Boolean = false, onCpfp: () -> Unit = {}, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -191,6 +363,7 @@ private fun MovementRow(tx: TxConf, hidden: Boolean, note: TransactionNote?, uni
             if (!hidden && !note?.label.isNullOrEmpty()) Text(note.label,
                 style = MaterialTheme.typography.bodyMedium, color = TextMain, maxLines = 2)
             Text(shortTxid(tx.txid), style = MaterialTheme.typography.bodySmall, color = TextFaint)
+            immature?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Warn) }
         }
         if (canReplace) {
             // Status above, actions below: side by side they squeezed the amount (Android 1.2.5).
@@ -200,6 +373,11 @@ private fun MovementRow(tx: TxConf, hidden: Boolean, note: TransactionNote?, uni
                     LinkText("⚡ speed up", color = Purple) { onReplace(false) }
                     LinkText("✕ cancel", color = Warn) { onReplace(true) }
                 }
+            }
+        } else if (canCpfp) {
+            Column(horizontalAlignment = Alignment.End) {
+                ConfBadge(tx)
+                LinkText("⚡ speed up", color = Purple) { onCpfp() }
             }
         } else ConfBadge(tx)
     }
@@ -220,7 +398,7 @@ private fun ConfBadge(tx: TxConf) {
 
 @Composable
 private fun MovementDialog(tx: TxConf, hidden: Boolean, saved: TransactionNote, unit: AmountUnit,
-    onSave: (String, String) -> Boolean, onReplace: ((Boolean) -> Unit)?, onClose: () -> Unit) {
+    onSave: (String, String) -> Boolean, onReplace: ((Boolean) -> Unit)?, onCpfp: (() -> Unit)? = null, onClose: () -> Unit) {
     var label by remember(tx.txid) { mutableStateOf(saved.label) }
     var note by remember(tx.txid) { mutableStateOf(saved.note) }
     val clipboard = LocalClipboardManager.current
@@ -251,6 +429,7 @@ private fun MovementDialog(tx: TxConf, hidden: Boolean, saved: TransactionNote, 
                     LinkText("⚡ SPEED UP (RBF)", color = Purple) { r(false) }
                     LinkText("✕ CANCEL (RBF)", color = Warn) { r(true) }
                 }
+                onCpfp?.let { c -> LinkText("⚡ SPEED UP (CPFP)", color = Purple) { c() } }
             }
         },
         confirmButton = { TextButton(onClick = { if (hidden || onSave(label, note)) onClose() }) {

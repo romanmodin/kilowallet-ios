@@ -42,6 +42,9 @@ class CertificateChangedException(val endpoint: String, val fingerprint: String)
  * explicit first-use approval; no wallet queries are sent until the fingerprint is accepted.
  * Connections always require TLS, including local nodes.
  */
+/** A Tor onion service address (Android's ElectrumClient.isOnion). */
+fun isOnionHost(host: String): Boolean = host.trim().lowercase().trimEnd('.').endsWith(".onion")
+
 class ElectrumClient(
     val endpoint: NodeEndpoint,
     private val pinnedFingerprint: String?,
@@ -88,6 +91,10 @@ class ElectrumClient(
         } catch (e: Exception) {
             throw ElectrumException("Could not establish TLS with $endpoint: ${e.message}", e)
         }
+        finishConnect(c)
+    }
+
+    private fun finishConnect(c: LineTransport) {
         conn = c
         serverFingerprint = c.fingerprint
         try {

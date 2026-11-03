@@ -49,6 +49,11 @@ fun App(platform: AppPlatform, model: WalletModel = remember { WalletModel(platf
                 key(state.walletId) {
                     when (val s = state.screen) {
                         Screen.Welcome -> WelcomeScreen(model)
+                    Screen.Dice -> DiceScreen(model)
+                    is Screen.RestoreFile -> RestoreFileScreen(model, s.bytes)
+                    Screen.Backup -> BackupScreen(model)
+                    Screen.TorLog -> TorLogScreen(model)
+                    is Screen.Cpfp -> ReplaceScreen(model, state, platform, s.txid, cancel = false, cpfp = true)
                         is Screen.CreateShow -> CreateShowScreen(model, s.words)
                         is Screen.CreateConfirm -> CreateConfirmScreen(model, s.words, s.positions)
                         Screen.Restore -> RestoreScreen(model)

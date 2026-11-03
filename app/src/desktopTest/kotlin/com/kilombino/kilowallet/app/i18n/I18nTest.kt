@@ -182,6 +182,7 @@ class I18nTest {
         "ab",
         "addresses.v1.12",
         "backup.checked.",
+        "backup-check", // Internal screenshot fixture ID.
         "bc1",
         "block_height",
         "cd",
@@ -240,10 +241,58 @@ class I18nTest {
         "12 345:12 345 UTC", "Kilojoin", "KILOJOIN", "12 345 × 12 345 sats", "12 × 12 345 sats", "12 345 sats → 12 345",
         // Pieces of strings the code joins at run time; [iosTemplates] checks the whole ones.
         " · 12 345 of 12 345", "12 345 addresses · 12 345 used so far",
+        // The main screen's tabs and refresh choices (the same in every table), and its screenshot names.
+        "BTC", "LIGHTNING", "ARK", "Ark", "LIGHTNING · BETA", "30 s", "1 min", "5 min", "↻ 12 345s", "Gap limit: 12 345",
+        "lightning", "ark", "locked", "simple", "○ Taproot (bc1p)",
+        // Lightning: preference keys, protocol and JSON field names, screenshot names and demo values,
+        // pieces matched against LND's own messages, a regex, and dates (English month names, UTC).
+        "alias", "birthday", "enabled", "expected_pubkey", "fee_min", "fee_pct", "fund_addrs", "peers", "settle_index", "ln.12",
+        "GET", "txid", "vout", "value", "scriptpubkey_address", "expired", "starting", "desc = ", "lightning:", "LIGHTNING:",
+        "bitcoin:12", "pubkey@host:port", "Kilombino", "Kilowallet-", "Kilowallet-demo", "coffee", "7a", "ab", "s",
+        "ln-starting", "ln-running", "ln-failed", "ln-live", "(?i)\\\\blno1[0-9a-z]+", "31 Oct 23:15", "Sats", "– sats",
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        // The backup file: the settings' JSON keys and type tags (the Android app's), and its file name;
+        // the Taproot address type, the same name in every table.
+        "store", "t", "v", "b", "i", "s", "refresh_open_s", "coinjoin_enabled", "ios_gap_limit", "ios_street_mode", "kilowallet-12.kab",
+        "Taproot (bc1p)", "Taproot · bc1p… (BIP86)", "POOLS",
+        // Screenshot names and a made-up txid of the new demos.
+        "dice", "backup", "cpfp", "receive-taproot", "settings-taproot", "pool-history", "6b", "psbt", "ur:",
+        // Ark: the engine's state and kind words the code matches (the screen shows its own texts for
+        // them), the sheets' keys, screenshot names, demo ids, address and invoice prefixes, the word to
+        // type to confirm the exit, the background task's name, and the error prefix.
+        "activate", "words", "board", "ark-ready", "ark-live", "demo-1", "demo-2", "demo-3", "demo-4", "ark1", "ln",
+        "awaiting-delta", "claimable", "claimed", "claim-in-progress", "processing", "htlcs-ready", "preimage-revealed",
+        "delivering", "settled", "BOLT12", "Lightning", "EXIT", "Ark renewal", "Error", "Error: ", "Error: 12", "Error: …",
+        // " UTC" after a date; "normal" (the fee speed) is the same word in Spanish.
+        " UTC", "normal",
+        // The locked-rewards screenshot's name and made-up txids.
+        "immature", "c0", "c1",
+        // LND's splice status and refusal codes the code matches (the screen shows its own text for each),
+        // the channel backup's file name and an address field's hint.
+        "ok", "peer_not_announcing", "peer_offline", "peer_unsupported", "no_unified_sigs", "taproot", "zero_conf", "pending",
+        "closing", "disabled", "peer_not_locked", "peer_misbehaved", "insufficient_funds", "immature_inputs", "below_min",
+        "above_max_out", "fee_below_floor", "reserve_on_change", "close_address_set", "node_cap", "confirmed", "broadcast",
+        "kilowallet-channel.backup", "bc1…", "12…  12 sats · 12",
+        // Tor: the screenshot runs' names, a preference key, the state words the CI log shows.
+        "tor-live", "tor-log", "tower_added", "it stopped", "still connecting after 3 minutes", "Tor",
+        // The backup file's Lightning keys and the node's channel backup path.
+        "restore_scb", "scb", "12/data/chain/bitcoin/mainnet/channel.backup",
+        // What the Ark backup round trip of the screenshot run prints to the CI log.
+        "FAILED: ", "demo password", "file 12 345 bytes, db 12 345 bytes, wal 12 345, derived 12; after restore: 12",
+        "no Ark files to back up", "the Ark database did not come back",
+        // The bridge's refusal code the code asks the text of.
+        "no_amount",
+        // Moving the node: its file name and preference keys.
+        "kilowallet-lightning.move", "moved_away", "moving", "Error: 12 345",
+        // Balance alerts: the kept lists' key and the wallet kinds they are filed under.
+        "watch.list.", "HOT", "WATCH", "ln-bridge", "ln-move", "settings-notify", "a0", "02cd566293ad8c8fd55bf5c5be38df5fc0af2b445333b10cbbd8b8a7d4c7ed7fe3",
     ).map { Regex(Regex.escape(it)) } + listOf(
+        Regex("""(12 345 · )?12(/12 345)? conf"""), Regex(""" · 12/12 345 conf"""), Regex("""\d{4}-\d\d-\d\dT[0-9:]+"""),
         Regex("""[?=+]? ?12( 345)?( sats| sat/vB| BTC( \(XBT\))?)?( · 12 345 sat/vB)?"""), // amounts and rates
         Regex("""m/.*"""), Regex("""pin\..*"""), Regex("""mempool\.kilombino\.com/tx/.*"""), Regex("""bc1q[a-z0-9]{30,}"""),
         Regex(""".*kilombino\.com:17717"""), Regex("""kilojoin\..*"""),
+        // What the screenshot runs print to the CI log.
+        Regex("""KW .*"""),
     )
 
     private fun iosStrings(src: String): List<String> {

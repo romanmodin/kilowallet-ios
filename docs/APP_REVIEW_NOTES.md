@@ -1,4 +1,4 @@
-# App Review notes — Kilowallet for iOS 0.4.0 (build 4)
+# App Review notes — Kilowallet for iOS 0.4.1 (build 5)
 
 For the person who submits the app (App Store Connect → the version → **App Review Information →
 Notes**). The first section is ready to paste; the rest explains what is behind it and how a
@@ -90,11 +90,12 @@ reviewer will not have. For that reason, attach screenshots (or a short screen r
 screens above. They come from the project's own CI: every push builds the app for the simulator and
 saves screenshots of each screen in the **screenshots** artifact of the GitHub Actions run
 (files ending in `pool-intro`, `pools`, `pool-join`, `pool-create`, `pool-pay`, `pool-round`, plus
-Spanish and Chinese ones). They are taken by a Debug-only launch argument (`-kwDemo <screen>`) that
+Spanish and Chinese ones). They are taken by a Debug-only environment variable (`KW_DEMO=<screen>`) that
 fills the screens with made-up pools and coins held in memory; Release builds ignore it. To make
 them yourself: run `scripts/ci-screenshots.sh` with a Debug simulator build, or launch the Debug app
-from Xcode with the argument `-kwDemo pools` (or `pool-round`, `pool-create`, `pool-join`,
-`pool-pay`, `pool-intro`).
+from Xcode with the environment variable `KW_DEMO=pools` in the scheme (or `pool-round`,
+`pool-create`, `pool-join`, `pool-pay`, `pool-intro`). Not a launch argument: LND, linked into the
+app, reads the process's arguments as its own flags and refuses to start on any it doesn't know.
 
 ## Guidelines this touches
 
@@ -110,7 +111,13 @@ from Xcode with the argument `-kwDemo pools` (or `pool-round`, `pool-create`, `p
   after the user turns Kilojoin on — to the Nostr relay `relay.kilombino.com`. The privacy label stays
   "Data Not Collected".
 
-## Suggested "What's New in This Version" (0.4.0)
+## Suggested "What's New in This Version" (0.4.1)
+
+> Kilojoin is more reliable: a pool whose vote runs out no longer gets stuck and cancelled, a round
+> goes ahead without someone whose phone fell asleep, a seat whose coins were spent is taken out,
+> and the list of open pools loads much faster. Also: the latest language tables.
+
+## "What's New" of 0.4.0 (for reference)
 
 > Kilojoin: shared transactions. Join a pool with other Kilowallet users, or open one, and each
 > person gets back outputs of the same amount to fresh addresses of their own, in one transaction
@@ -136,7 +143,7 @@ No new export-compliance determination or legal agreement is asserted by this so
 
 ## Build
 
-Unchanged from 0.3: see the README's "Hand-off: build, sign and upload". Version 0.4.0, build 4
+Unchanged from 0.3: see the README's "Hand-off: build, sign and upload". Version 0.4.1, build 5
 (`iosApp/Configuration/Config.xcconfig`). No new permissions, entitlements, background modes or
 third-party SDKs: rounds use the background time iOS gives any app after it leaves the screen
 (`beginBackgroundTask`), nothing more.
