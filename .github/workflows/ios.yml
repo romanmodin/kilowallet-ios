@@ -13,7 +13,7 @@ concurrency:
 jobs:
   native:
     name: iPhone release and simulator qualification
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 200
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +29,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.konan
-          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
       - name: Select supported Xcode
         run: |
@@ -42,7 +42,20 @@ jobs:
           test "${sdk%%.*}" -ge 26
 
       - name: Unit tests (JVM and iOS simulator)
-        run: ./gradlew :core:jvmTest :core:iosSimulatorArm64Test :app:desktopTest :app:iosSimulatorArm64Test --stacktrace
+        run: ./gradlew :core:jvmTest :core:iosX64Test :app:desktopTest :app:iosX64Test --stacktrace
+
+      - name: Check native tests actually ran on the Intel simulator
+        run: |
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          for module,minimum in [('core',108),('app',52)]:
+              cases = [case for xml in Path(module+'/build/test-results/iosX64Test').glob('TEST-*.xml')
+                       for case in ET.parse(xml).getroot().findall('testcase')]
+              if len(cases) < minimum or any(len(c.findall('failure')+c.findall('error')+c.findall('skipped')) for c in cases):
+                  raise SystemExit(f'{module}: expected at least {minimum} passing iOS tests, got {len(cases)} cases')
+              print(f'{module}: {len(cases)} passing iOS tests')
+          PYTEST
 
       - name: Preserve JVM regression evidence before optional live scan
         if: always()
@@ -78,7 +91,7 @@ jobs:
           mkdir -p build
           xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Debug \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/dd ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build \
+            -derivedDataPath build/dd ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build \
             > build/xcodebuild.log 2>&1
           test -x build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app/Kilowallet
 
@@ -113,6 +126,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build \
             > build/xcodebuild-release.log 2>&1
           test -x build/dd/Build/Products/Release-iphoneos/Kilowallet.app/Kilowallet
+          xcrun lipo -verify_arch arm64 build/dd/Build/Products/Release-iphoneos/Kilowallet.app/Kilowallet
           du -sh build/dd/Build/Products/Release-iphoneos/Kilowallet.app
       - uses: actions/upload-artifact@v4
         if: always()
