@@ -1341,16 +1341,6 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     // ------------------------------------------------------------------ speed up / cancel (RBF)
 
     /** The next unused change address's script (one past the highest change address seen, none a pool's seat holds). */
-    private fun freshChange(s: UiState): ByteArray {
-        val tr = receivesTaproot(s)
-        val key = (if (tr) s.taprootXpub else s.zpub) ?: error("No wallet.")
-        val type = if (tr) ScriptType.P2TR else s.keyType
-        val held = pools.reservedScripts()
-        var index = receiveRows(s).filter { it.chainIndex == 1 }.maxOfOrNull { it.index }?.plus(1) ?: 0
-        while (SendPlanner.changeScript(key, index, type).toList() in held) index++
-        return SendPlanner.changeScript(key, index, type)
-    }
-
     /** Open a pool for the payment typed in SEND (1 to 5 recipients). */
     fun payThroughPool(recipients: List<Pair<String, Long>>, rate: Double) {
         pools.startPayment(PoolPayRequest(recipients, rate))
@@ -1400,16 +1390,26 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     fun prepareCpfp(txid: String, rate: Double) {
         val s = _state.value
         val zpub = s.zpub ?: return
-        if (s.kind != WalletKind.HOT) return
+        if (s.kind != WalletKind.HOT || s.send !is SendPhase.Editing || pending(zpub) != null || poolActionBlocked()) return
+        cancelAction()
+        val epoch = actionEpoch
         _state.update { it.copy(send = SendPhase.Preparing) }
-        scope.launch {
-            runCatching {
+        sendJob = scope.launch {
+            try {
                 val (fee, vsize, ours) = scanner.cpfpParent(txid, s.rows, s.endpoint, s.pinned)
-                val d = withContext(Dispatchers.Default) { com.kilombino.kilowallet.core.wallet.CpfpPlanner.plan(txid, fee, vsize, ours, freshChange(s), rate) }
+                if (!isCurrent(epoch, s)) return@launch
+                require(allowedCoins(s, ours).size == ours.size) { "A reviewed coin is frozen. Edit the payment." }
+                val key = receivingKey(s)
+                addresses.observe(key, receiveRows(s))
+                val index = addresses.next(key, 1)
+                addresses.checkAvailable(key, 1, index)
+                val spk = changeScript(s, index)
+                require(spk.toList() !in pools.reservedScripts()) { "Address progress changed. Refresh and try again." }
+                val d = withContext(cryptoDispatcher) { com.kilombino.kilowallet.core.wallet.CpfpPlanner.plan(txid, fee, vsize, ours, spk, rate) }
                 scanner.verifyCoins(zpub, d.inputs, s.endpoint, s.pinned, s.keyType, s.activeTaproot)
-                d
-            }.onSuccess { d -> _state.update { it.copy(send = SendPhase.Review(d, SendPlanner.feeConcern(d))) } }
-             .onFailure { e -> _state.update { it.copy(send = SendPhase.Failed(e.message ?: "Could not prepare the speed-up.")) } }
+                if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Review(d, SendPlanner.feeConcern(d), index)) }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Failed(e.message ?: "Could not prepare the speed-up.")) } }
         }
     }
 
