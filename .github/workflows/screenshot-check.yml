@@ -44,3 +44,11 @@ jobs:
             set -e
             test "$result" -eq 1
           done
+
+          # Actual wrong English frame and correct Spanish frame from run 41859580775.
+          /tmp/check-screen scripts/fixtures/ln-running-es.png '460 550'
+          set +e
+          /tmp/check-screen scripts/fixtures/ln-running-welcome.png '460 550'
+          result=$?
+          set -e
+          test "$result" -eq 1
