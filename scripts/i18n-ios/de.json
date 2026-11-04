@@ -527,5 +527,6 @@
   "Kilojoin is an open protocol over nostr, the same one Kilowallet for Android and for desktop use, so you can be in a pool with people on any of them. Native SegWit (bc1q) pools only in this app; Taproot pools are not shown. Pools are open from {0} sats per person, {1} sats per output at least.": "Kilojoin ist ein offenes Protokoll über nostr, dasselbe, das Kilowallet für Android und für den Desktop nutzen, sodass du mit Leuten von jedem davon in einem Pool sein kannst. In dieser App nur Native-SegWit-Pools (bc1q); Taproot-Pools werden nicht angezeigt. Pools gibt es ab {0} sats pro Person und mindestens {1} sats pro Ausgabe.",
   "Receive XBT": "XBT empfangen",
   "Your XBT": "Deine XBT",
-  "Send XBT": "XBT senden"
+  "Send XBT": "XBT senden",
+  "Round input spent by confirmed transaction: {0}": "Eingabe der Runde durch bestätigte Transaktion ausgegeben: {0}"
 }
