@@ -155,6 +155,14 @@ class PoolSession(private val env: Env, private val s: State, private val socket
         val mixScript: ByteArray get() = mixScripts.first()
         val done: Boolean get() = phase in setOf(Phase.CONFIRMED, Phase.ABORTED, Phase.REJECTED)
 
+        /** Recheck previously terminal signed history before expiry pruning or coin selection. */
+        fun restoreSignedReservation() {
+            if (!done || !(postedSig || seat.coins.any { it.outpoint in sigs })) return
+            phase = if (txid != null) Phase.BROADCAST else Phase.SIGNING
+            endedAt = 0L
+            reason = ""
+        }
+
         fun toJson(): JsonObject = J.obj(
             "terms" to J.with(terms.toJson(), "created_at" to terms.createdAt),
             "creator" to creator, "pool_secret" to (poolSecret ?: ""), "join_secret" to joinSecret,
@@ -1042,6 +1050,20 @@ class PoolSession(private val env: Env, private val s: State, private val socket
         maybeBroadcast(plan)
     }
 
+    private var lastRebroadcast: Long? = null
+
+    /** Reuse only the original fully signed transaction; never generate a new signature. */
+    private fun rebroadcastIfMissing(txid: String, now: Long) {
+        if (lastRebroadcast?.let { now - it in 0 until 60L } == true) return
+        lastRebroadcast = now
+        val plan = buildPlan() ?: return
+        if (PoolTx.txid(plan) != txid || checkPlan(plan) != null) return
+        val witnesses = s.sigs.mapValues { Hashes.hexToBytes(it.value) }
+        if (!plan.coins.all { coin -> witnesses[coin.outpoint]?.let { PoolTx.verify(plan, coin, it) } == true }) return
+        val signed = PoolTx.assemble(plan, witnesses)
+        if (signed.txid == txid) env.broadcast(signed.rawHex)
+    }
+
     private suspend fun maybeBroadcast(plan: PoolTx.Plan) {
         if (s.sigs.size < plan.coins.size || s.txid != null) return
         val tx = PoolTx.assemble(plan, s.sigs.mapValues { Hashes.hexToBytes(it.value) })
@@ -1216,11 +1238,13 @@ class PoolSession(private val env: Env, private val s: State, private val socket
                         abort("not everyone signed in time")
                 }
                 Phase.BROADCAST -> s.txid?.let { txid ->
-                    val c = runCatching { env.confirmations(txid) }.getOrNull()
-                    if (c != null && c >= 1) { s.phase = Phase.CONFIRMED; save(); env.event(Event.Confirmed(s.poolId, txid)); relay?.close(); relay = null }
+                    val observed = runCatching { env.confirmations(txid) }
+                    val c = observed.getOrNull()
+                    if (c != null && c >= REQUIRED_CONFIRMATIONS) { s.phase = Phase.CONFIRMED; save(); env.event(Event.Confirmed(s.poolId, txid)); relay?.close(); relay = null }
                     // Unknown history (including a failed lookup) is not proof of a conflicting
                     // spend. Keep the reservation regardless of elapsed time.
                     else if (c != null) s.phaseDeadline = now
+                    else if (observed.isSuccess) rebroadcastIfMissing(txid, now)
                 }
                 else -> {}
             }
@@ -1232,6 +1256,7 @@ class PoolSession(private val env: Env, private val s: State, private val socket
     companion object {
         /** Reason of a round this wallet left on purpose: its card goes away by itself. */
         const val LEFT_BY_CHOICE = "you left this round"
+        const val REQUIRED_CONFIRMATIONS = 6
         const val JOIN_TIMEOUT = 5 * 60
         const val VOTE_GRACE = 3 * 60L
         const val EXPIRY_WARN_SECONDS = 3600

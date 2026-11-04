@@ -22,7 +22,7 @@ class SignedRoundRetentionTest {
             creatorSecret = pool.creatorSecret, blindPriv = pool.blindPriv)
     }
 
-    private fun retained(phase: PoolSession.Phase, lookupThrows: Boolean = false, signed: Boolean = true) = runBlocking {
+    private fun retained(phase: PoolSession.Phase, lookupThrows: Boolean = false, signed: Boolean = true, depth: Int? = null) = runBlocking {
         val s = state()
         s.phase = phase
         s.postedSig = signed
@@ -37,7 +37,7 @@ class SignedRoundRetentionTest {
             override fun confirmations(txid: String): Int? {
                 queries.incrementAndGet()
                 if (lookupThrows) error("synthetic backend unavailable")
-                return null
+                return depth
             }
             override fun save(state: PoolSession.State) { PoolSession.State.parse(state.toJson()) }
             override fun event(e: PoolSession.Event) {}
@@ -49,7 +49,10 @@ class SignedRoundRetentionTest {
             delay(6500)
             assertTrue(clocks.get() > 0, "actual ticker must have run")
             if (phase == PoolSession.Phase.BROADCAST) assertTrue(queries.get() > 0)
-            if (signed) {
+            if (depth == 6) {
+                assertEquals(PoolSession.Phase.CONFIRMED, s.phase)
+                assertTrue(session.done)
+            } else if (signed) {
                 assertEquals(phase, s.phase, "elapsed time or unavailable history is not conflict proof")
                 assertFalse(session.done, "signed input must remain unresolved")
             } else {
@@ -59,6 +62,17 @@ class SignedRoundRetentionTest {
         } finally { session.dispose() }
     }
 
+    @Test fun oneConfirmationStaysReserved() = retained(PoolSession.Phase.BROADCAST, depth = 1)
+    @Test fun fiveConfirmationsStayReserved() = retained(PoolSession.Phase.BROADCAST, depth = 5)
+    @Test fun sixConfirmationsResolve() = retained(PoolSession.Phase.BROADCAST, depth = 6)
+    @Test fun signedAbortRestoresReservationButUnsignedAbortStaysTerminal() {
+        for (signed in listOf(true, false)) {
+            val original = state().apply { phase = PoolSession.Phase.ABORTED; postedSig = signed }
+            val restored = PoolSession.State.parse(original.toJson())
+            restored.restoreSignedReservation()
+            assertEquals(if (signed) PoolSession.Phase.SIGNING else PoolSession.Phase.ABORTED, restored.phase)
+        }
+    }
     @Test fun unsignedMemberStillExpires() = retained(PoolSession.Phase.SIGNING, signed = false)
     @Test fun unseenBroadcastDoesNotExpireAfterTwelveHours() = retained(PoolSession.Phase.BROADCAST)
     @Test fun unavailableBackendDoesNotReleaseSignedInput() = retained(PoolSession.Phase.BROADCAST, true)

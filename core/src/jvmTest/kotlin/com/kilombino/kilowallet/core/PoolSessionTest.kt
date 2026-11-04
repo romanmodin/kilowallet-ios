@@ -105,7 +105,7 @@ class PoolSessionTest {
         override fun coinUnspent(coin: PoolTx.Coin) = chain.utxos[coin.outpoint] == coin.value
         override fun broadcast(rawHex: String) = chain.broadcast(rawHex)
         override fun confirmations(txid: String): Int? = when {
-            txid in chain.mined -> 1
+            txid in chain.mined -> 6
             chain.txs.any { TxParse.txid(TxParse.parse(it)) == txid } -> 0
             else -> null
         }
@@ -151,7 +151,7 @@ class PoolSessionTest {
 
     /** A full round: [creatorCoins]/[joinerCoins] values, [outputs] each, [payments] for v5. */
     private fun round(amount: Long, outputs: Int, creatorCoins: List<Long>, joinerCoins: List<List<Long>>, payments: List<Long> = emptyList(),
-                      maxInputs: Int = 1) = runBlocking {
+                      maxInputs: Int = 1, restartAfterReorg: Boolean = false) = runBlocking {
         val np = PoolSession.newPool(amount, 2.0, 5, 1, maxInputs = maxInputs, outputs = outputs, payments = payments)
         val t = np.terms
         val cc = creatorCoins.map { coin(it) }
@@ -189,10 +189,24 @@ class PoolSessionTest {
         for (p in payments) assertTrue(tx.outputs.any { it.value == p })
         chain.mined.add(TxParse.txid(tx))
         waitFor("confirmed", 40) { all.all { it.s.state.phase == PoolSession.Phase.CONFIRMED } }
+        if (restartAfterReorg) {
+            val stored = a.s.state.toJson()
+            sessions.toList().forEach { it.dispose() }
+            chain.mined.clear()
+            chain.txs.clear()
+            plan.coins.forEach { chain.utxos[it.outpoint] = it.value }
+            val restored = PoolSession.State.parse(stored)
+            restored.restoreSignedReservation()
+            assertEquals(PoolSession.Phase.BROADCAST, restored.phase)
+            session("restored signer", restored)
+            waitFor("original transaction rebroadcast after restart", 40) { chain.txs.isNotEmpty() }
+            assertEquals(raw, chain.txs.single())
+            assertEquals(PoolSession.Phase.BROADCAST, restored.phase)
+        }
         tx
     }
 
-    @Test fun v3OneEqualOutputEach() { round(50_000, 1, listOf(60_000), listOf(listOf(51_000), listOf(80_000))) }
+    @Test fun v3OneEqualOutputEach() { round(50_000, 1, listOf(60_000), listOf(listOf(51_000), listOf(80_000)), restartAfterReorg = true) }
 
     @Test fun v4TwoEqualOutputsEachSeveralCoins() {
         val tx = round(20_000, 2, listOf(30_000, 15_000), listOf(listOf(41_000), listOf(25_000, 25_000)), maxInputs = 2)

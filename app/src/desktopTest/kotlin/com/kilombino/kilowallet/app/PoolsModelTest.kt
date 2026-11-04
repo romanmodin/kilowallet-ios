@@ -129,14 +129,17 @@ class PoolsModelTest {
             return id
         }
 
-        @Synchronized fun mine() {
+        private var tip = 100
+        @Synchronized fun mine(blocks: Int) {
+            require(blocks >= 1)
+            tip += blocks
             utxos.values.flatten().forEach { if (it.height == 0) it.height = 101 }
             history.values.forEach { l -> l.replaceAll { (t, h) -> t to if (h == 0) 101 else h } }
         }
 
         @Synchronized fun answer(method: String, p: JsonArray): JsonElement = when (method) {
             "server.version" -> JsonArray(listOf(JsonPrimitive("Fake 1.0"), JsonPrimitive("1.4")))
-            "blockchain.headers.subscribe" -> buildJsonObject { put("height", 101); put("hex", "000000a0700c8b9690014507c6c277900d743ac3ed6d814f90772d060000000000000000670caeac2404c80798669b242623ea7310be8f47166168e9734baab9dec80446b2c2c66a2ad80019be9815dad0f4b1da0000000000000000b10cf8578500000000000000b2c2c66a7501000000000000000000000000000000000000d6e40e000000000000000000000000000000000000000000000000000000000000000000") }
+            "blockchain.headers.subscribe" -> buildJsonObject { put("height", tip); put("hex", "000000a0700c8b9690014507c6c277900d743ac3ed6d814f90772d060000000000000000670caeac2404c80798669b242623ea7310be8f47166168e9734baab9dec80446b2c2c66a2ad80019be9815dad0f4b1da0000000000000000b10cf8578500000000000000b2c2c66a7501000000000000000000000000000000000000d6e40e000000000000000000000000000000000000000000000000000000000000000000") }
             "blockchain.scripthash.listunspent" -> JsonArray(utxos[p[0].jsonPrimitive.content].orEmpty().map { u ->
                 buildJsonObject { put("tx_hash", u.txid); put("tx_pos", u.vout); put("value", u.value); put("height", u.height) } })
             "blockchain.scripthash.get_history" -> JsonArray(history[p[0].jsonPrimitive.content].orEmpty().map { (t, h) ->
@@ -245,7 +248,7 @@ class PoolsModelTest {
         a.pools.sign(t.id); b.pools.sign(t.id)
         waitFor("sent") { a.round.txid != null && b.round.txid != null }
         assertEquals(1, chain.sent.size)
-        chain.mine()
+        chain.mine(6)
         waitFor("confirmed", 40) { a.round.phase == PoolSession.Phase.CONFIRMED && b.round.phase == PoolSession.Phase.CONFIRMED }
         return TxParse.parse(chain.sent.single())
     }

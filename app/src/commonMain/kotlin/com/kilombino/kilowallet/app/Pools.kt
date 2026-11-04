@@ -114,6 +114,7 @@ class PoolsModel(
         raw?.let { r ->
             runCatching { Json.parseToJsonElement(r).jsonArray }.getOrNull()?.forEach { e ->
                 val st = runCatching { PoolSession.State.parse(e.jsonObject) }.getOrNull() ?: return@forEach
+                st.restoreSignedReservation()
                 if (st.done && st.created < weekAgo) return@forEach
                 loaded[st.key] = PoolSession(env(st), st, platform.sockets)
             }
