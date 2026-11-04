@@ -44,7 +44,27 @@ for screen in welcome history create restore watch home simple lightning ln-star
   # teardown can race the following launch. Keep each app's own stdout/stderr.
   log="$PWD/screenshots-logs/$name.log"
   SIMCTL_CHILD_KW_DEMO="$screen" xcrun simctl launch --terminate-running-process \
-    --stdout="$log" --stderr="$PWD/screenshots-logs/$name.stderr" "$UDID" "$BUNDLE"
+    --stdout="$log" --stderr="$PWD/screenshots-logs/$name.stderr" "$UDID" "$BUNDLE" | tee "screenshots-logs/$name.launch"
+  # Hosted Intel simulators can be slow before SwiftUI is constructed. Keep this
+  # separate from the unchanged deadline for preparing the requested screen.
+  selected=""
+  for startup in $(seq 1 120); do
+    selected=$(cat "$DATA/Documents/kw-demo-selected" 2>/dev/null || true)
+    [ "$selected" = "$screen" ] && break
+    sleep 1
+  done
+  if [ "$selected" != "$screen" ]; then
+    echo "$screen: startup failed; selected: ${selected:-none}"
+    xcrun simctl io "$UDID" screenshot "$OUT/startup-failed-$name.png" || true
+    pid=$(awk -F': ' 'NF == 2 { print $2 }' "screenshots-logs/$name.launch" | tail -1)
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+      sample "$pid" 5 -file "screenshots-logs/$name.sample.txt" || true
+    fi
+    xcrun simctl spawn "$UDID" log show --last 3m --style compact \
+      --predicate 'process == "Kilowallet"' >"screenshots-logs/$name.system.log" 2>&1 || true
+    exit 1
+  fi
+  echo "$screen: startup selected exact case after ${startup}s"
   limit=20; { [ "$base" = home ] || [ "$base" = simple ] || [ "$base" = immature ]; } && limit=150
   case "$base" in pool*) limit=90 ;; esac
   # The real Lightning engine: LND starts, makes a throwaway wallet and syncs with the chain's peers.
