@@ -28,6 +28,16 @@ xcrun simctl bootstatus "$UDID" -b
 xcrun simctl status_bar "$UDID" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3 || true
 xcrun simctl install "$UDID" "$APP"
 
+capture_lnd_log() {
+  local log_path="$DATA/Library/Application Support/lnd/demo/logs/bitcoin/mainnet/lnd.log"
+  if [ -f "$log_path" ]; then
+    cp "$log_path" screenshots-logs/lnd-live.log
+    tail -25 screenshots-logs/lnd-live.log
+  else
+    echo "no LND log at $log_path"
+  fi
+}
+
 n=0
 failures=0
 for screen in welcome history create restore watch home simple lightning ln-starting ln-running ln-failed ark locked receive send review replace settings pool-intro pools pool-join pool-create pool-pay pool-round home@es receive@es settings@es lightning@es ln-running@es pools@es pool-round@zh home@zh dice backup cpfp receive-taproot settings-taproot pool-history psbt immature dice@es backup@es pool-history@es psbt@es ark-ready ark-ready@es ark@es ln-bridge ln-move settings-notify ln-bridge@es ark-live tor-live tor-log ln-live wallets private note request export coins recipients filters units backup-check; do
@@ -82,6 +92,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
   echo "$screen: simulator selected: ${selected:-none}"
   if [ "$selected" = "$screen" ] && [ -f "$DATA/Documents/kw-ready-$base" ]; then echo "$screen: ready after ${i}s"; else
     echo "$screen: NOT ready after ${limit}s"
+    if [ "$base" = ln-live ]; then capture_lnd_log; fi
     xcrun simctl io "$UDID" screenshot "$OUT/failed-$name.png" || true
     exit 1
   fi
@@ -127,8 +138,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
     fi
   fi
   if [ "$base" = ln-live ]; then
-    LOG="$DATA/Library/Application Support/lnd/logs/bitcoin/mainnet/lnd.log"
-    [ -f "$LOG" ] && cp "$LOG" screenshots-logs/lnd-live.log && tail -25 screenshots-logs/lnd-live.log || echo "no LND log at $LOG"
+    capture_lnd_log
     ls -la "$DATA/Library/Application Support/lnd" || true
   fi
   grep "KW " "screenshots-logs/$name.log" 2>/dev/null || true

@@ -41,6 +41,9 @@ jobs:
           sdk=$(xcrun --sdk iphoneos --show-sdk-version)
           test "${sdk%%.*}" -ge 26
 
+      - name: Test native runtime evidence checker
+        run: python3 scripts/test-runtime-check.py
+
       - name: Unit tests (JVM and iOS simulator)
         run: ./gradlew :core:jvmTest :core:iosX64Test :app:desktopTest :app:iosX64Test --stacktrace
 
@@ -98,6 +101,9 @@ jobs:
       - name: Boot a simulator, launch the app and take screenshots
         run: ./scripts/ci-screenshots.sh build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app screenshots
 
+      - name: Verify live native engine outcomes
+        run: python3 scripts/check-runtime.py screenshots-logs
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -126,7 +132,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build \
             > build/xcodebuild-release.log 2>&1
           test -x build/dd/Build/Products/Release-iphoneos/Kilowallet.app/Kilowallet
-          xcrun lipo -verify_arch arm64 build/dd/Build/Products/Release-iphoneos/Kilowallet.app/Kilowallet
+          xcrun lipo build/dd/Build/Products/Release-iphoneos/Kilowallet.app/Kilowallet -verify_arch arm64
           du -sh build/dd/Build/Products/Release-iphoneos/Kilowallet.app
       - uses: actions/upload-artifact@v4
         if: always()

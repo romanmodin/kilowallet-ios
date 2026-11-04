@@ -1535,8 +1535,16 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         val k = com.kilombino.kilowallet.core.ln.Kilombino
         println("KW ln-live: node running, Tor in LND: ${lightning.torOn}, SOCKS ${com.kilombino.kilowallet.core.tor.Tor.port}")
         if (!lightning.torOn) return
-        withTimeoutOrNull(240_000) {
-            while (runCatching { ln.towers() }.getOrDefault(emptyList()).isEmpty()) { runCatching { lightning.refresh() }; delay(5_000) }
+        // GetInfo can answer while the full server is still starting. The demo's
+        // checks require the tower RPC and peer startup to finish, not just GetInfo.
+        // Bound this wait inside the runner's existing 1300-second budget.
+        withTimeoutOrNull(600_000) {
+            while (runCatching { ln.towers() }.getOrDefault(emptyList()).isEmpty()) {
+                println("KW ln-live: waiting for native server/tower; info: " +
+                    runCatching { ln.info().toString() }.getOrElse { it.message ?: "unavailable" })
+                runCatching { lightning.refresh() }
+                delay(5_000)
+            }
         }
         val towers = runCatching { ln.towers().toString() }.getOrElse { it.message ?: it.toString() }
         println("KW ln-live: towers $towers")
