@@ -1662,8 +1662,14 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         selectTab(Tab.LIGHTNING)
                         lightning.chainTip = 979_937
                         launch {
-                            val st = lightning.status.first { it is LightningModel.Status.Running || it is LightningModel.Status.Failed }
-                            if (st is LightningModel.Status.Running) lightningOverTorCheck()
+                            // A transient startup failure can precede the poller's recovery.
+                            // Do not mark the native demo ready before its engine checks run.
+                            // One deadline covers initial sync plus all tower/onion checks;
+                            // missing results still fail the independent runtime verifier.
+                            withTimeoutOrNull(1_800_000) {
+                                lightning.status.first { it is LightningModel.Status.Running }
+                                lightningOverTorCheck()
+                            }
                             platform.markReady(screen)
                         }
                         runCatching {
