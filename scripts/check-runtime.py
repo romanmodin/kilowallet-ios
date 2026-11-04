@@ -9,6 +9,7 @@ def check_engines(log):
       'onionPeerConnected':r'KW ln-live: connect Kilombino by onion: OK; peers \{[^\n]*\.onion:9735',
       'watchtowerRegistered':r'KW ln-live: towers \[\([^\n]*\.onion:9911\], true\)',
       'emptyChannelBackupRpc':r'KW ln-live: own channel backup [1-9][0-9]* bytes; RestoreChannelBackups by RPC: OK',
+      'coinjoinRelayThroughTor':r'KW tor-live: pool list through Tor via (?:onion|wss over Tor): [0-9]+ pool\(s\)(?:\r?\n|$)',
       'torStarted':r'KW tor-live: Tor SOCKS port [1-9][0-9]* ',
     }
     checks={k:bool(re.search(v,log)) for k,v in patterns.items()}

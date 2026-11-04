@@ -11,6 +11,7 @@ KW ln-live: node running, Tor in LND: true, SOCKS 9001
 KW ln-live: connect Kilombino by onion: OK; peers {public=test.onion:9735}
 KW ln-live: towers [(public, [test.onion:9911], true)]
 KW ln-live: own channel backup 45 bytes; RestoreChannelBackups by RPC: OK
+KW tor-live: pool list through Tor via onion: 0 pool(s)
 KW tor-live: Tor SOCKS port 9001 
 KW tor-live: Electrum through Tor: Error(message=Unapproved certificate)
 """
@@ -51,6 +52,18 @@ class RuntimeEvidenceTest(unittest.TestCase):
         ]:
             others = "\n".join(line for line in GOOD.splitlines() if "connect Kilombino" not in line)
             self.assertFalse(runtime.check_engines(others + "\n" + marker)["passed"])
+
+    def test_relay_wss_fallback_still_requires_tor(self):
+        self.assertTrue(runtime.check_engines(GOOD.replace("via onion:", "via wss over Tor:"))["passed"])
+
+    def test_relay_direct_route_is_not_tor_success(self):
+        self.assertFalse(runtime.check_engines(GOOD.replace("via onion:", "via direct:"))["passed"])
+
+    def test_relay_failure_is_not_a_pool_count(self):
+        self.assertFalse(runtime.check_engines(GOOD.replace("0 pool(s)", "failed: relay unavailable"))["passed"])
+
+    def test_nonempty_relay_pool_count(self):
+        self.assertTrue(runtime.check_engines(GOOD.replace("0 pool(s)", "12 pool(s)"))["passed"])
 
     def test_tls_rejection_preserved_not_called_successful_scan(self):
         result = runtime.check_engines(GOOD)

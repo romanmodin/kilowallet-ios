@@ -54,6 +54,7 @@ class PoolsModelTest {
     class Relay : WebSocketFactory {
         private val stored = CopyOnWriteArrayList<NostrEvent>()
         private val conns = CopyOnWriteArrayList<Conn>()
+        fun hasAnnouncement(poolId: String) = stored.any { it.kind == Protocol.KIND_POOL && it.tag("d") == poolId }
         inner class Conn(val l: WebSocketListener) : WebSocket {
             val subs = java.util.concurrent.ConcurrentHashMap<String, List<JsonObject>>()
             override fun send(text: String): Boolean { handle(this, text); return true }
@@ -224,6 +225,11 @@ class PoolsModelTest {
         a.pools.setEnabled(true); b.pools.setEnabled(true)
         open(a)
         waitFor("A's pool open") { a.pools.state.value.rounds.singleOrNull()?.phase == PoolSession.Phase.OPEN }
+        // OPEN is persisted before creatorStart publishes the announcement. Also wait
+        // for setEnabled's initial list request: refreshPools ignores calls while loading.
+        // These are observable barriers, not a retry or a longer timeout.
+        waitFor("A's pool announced") { relay.hasAnnouncement(a.round.poolId) }
+        waitFor("B's initial list completed") { !b.pools.state.value.loading }
         b.pools.refreshPools()
         waitFor("B sees it") { b.pools.state.value.open?.any { it.id == a.round.poolId } == true }
         val t = b.pools.state.value.open!!.first { it.id == a.round.poolId }

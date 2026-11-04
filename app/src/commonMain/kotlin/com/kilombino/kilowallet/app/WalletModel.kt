@@ -1692,6 +1692,11 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                                 // Record the real TLS outcome, then choose Not now for
                                 // this synthetic demo. Never approve or persist a new pin.
                                 dismissCertificate()
+                                // The pools' relay through Tor: its onion first (RelayRoute).
+                                val pools = runCatching { withContext(Dispatchers.Default) { pools.countPoolsNow() } }
+                                val route = (platform.sockets as? RelayRoute)?.last
+                                val got = pools.getOrElse { "failed: " + (it.message ?: it.toString()) }
+                                println("KW tor-live: pool list through Tor via $route: $got")
                             }
                             go(if (screen == "tor-log") Screen.TorLog else Screen.Settings)
                             delay(2_500); platform.markReady(screen)

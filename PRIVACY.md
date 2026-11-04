@@ -1,6 +1,6 @@
 # Kilowallet privacy information
 
-Kilowallet 1.0 iPhone release candidate, November 3, 2026. Original creator: **Kilombino**. Distribution maintained by romanmodin.
+Kilowallet 1.0 iPhone release candidate, November 4, 2026. Original creator: **Kilombino**. Distribution maintained by romanmodin.
 
 ## Data on your iPhone
 
@@ -44,7 +44,7 @@ secrets. The shared text identifies XBT BLAKE2b; another wallet may ignore a URI
 
 ## Optional network services in 1.0
 
-Kilojoin uses a relay to coordinate collaborative transactions. The relay operator reports no IP logs and deletes retained coordination messages after seven days. Public pool announcements are visible to other participants. This build makes no promise that all Kilojoin traffic uses Tor. The relay and price endpoint use Cloudflare, which processes connection data. The price endpoint operator reports no access logs.
+Kilojoin uses a relay to coordinate collaborative transactions. The relay operator reports no IP logs and deletes retained coordination messages after seven days. Public pool announcements are visible to other participants. With the app's Tor running, this candidate connects to the relay's onion service first and falls back to the public relay through Tor. It fails if both Tor routes fail; it does not fall back to a direct connection in that case. With Tor off, Kilojoin connects directly. Tor routing is not a guarantee of anonymity or background execution. The public relay and price endpoint use Cloudflare, which processes connection data. The price endpoint operator reports no access logs.
 
 The Lightning bridge is optional. This iPhone release candidate contacts the bridge via HTTPS through Cloudflare, even if the Lightning node uses Tor. The operator keeps IPs only in memory for rate limiting until an hour of inactivity. Quotes retain the payment hash, amount and expiry until expiry plus one minute; proof tokens last one hour and the re-quote guard about eleven minutes. The bridge's Lightning node retains its swap journal indefinitely, including payment hash, destination invoice (containing the recipient's node ID), amounts, preimage and state. An internal monitor retains hashes and states for operator alerts. There is no payer account; the operator reports it does not receive the payer's node ID.
 
