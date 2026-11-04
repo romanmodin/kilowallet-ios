@@ -1551,11 +1551,23 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         }
         val towers = runCatching { ln.towers().toString() }.getOrElse { it.message ?: it.toString() }
         println("KW ln-live: towers $towers")
-        runCatching { ln.disconnect(k.NODE) }
-        delay(2_000)
-        val r = runCatching { ln.connect(k.NODE, k.ONION) }
-        val how = r.exceptionOrNull()?.message ?: "OK"
-        val peers = runCatching { ln.peerAddresses().toString() }.getOrElse { it.message ?: it.toString() }
+        // A transient onion circuit failure must remain a failure unless a later
+        // bounded attempt really connects. Do not accept an IP peer as onion proof.
+        var how = "ONION_NOT_VERIFIED"
+        var peers = "{}"
+        for (attempt in 1..3) {
+            runCatching { ln.disconnect(k.NODE) }
+            delay(5_000)
+            val result = withTimeoutOrNull(90_000) {
+                val connected = runCatching { ln.connect(k.NODE, k.ONION) }
+                val addresses = runCatching { ln.peerAddresses() }.getOrDefault(emptyMap())
+                peers = addresses.toString()
+                connected.isSuccess && addresses[k.NODE] == k.ONION
+            } ?: false
+            if (result) { how = "OK"; break }
+            println("KW ln-live: onion attempt $attempt not verified; peers $peers")
+            if (attempt < 3) delay(10_000)
+        }
         println("KW ln-live: connect Kilombino by onion: $how; peers $peers")
         // RestoreChannelBackups by RPC (fixed in Lightning Fork 21.2: up to 21.1 it took every backup
         // for another chain's). The node's own backup has no channel, so this only shows the call goes through.
@@ -1671,6 +1683,9 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                                 val end = withTimeoutOrNull(180_000) { _state.first { it.scan is ScanPhase.Done || it.scan is ScanPhase.Error }.scan }
                                 val height = _state.value.height
                                 println("KW tor-live: Electrum through Tor: $end (null: no answer in 3 min); height $height")
+                                // Record the real TLS outcome, then choose Not now for
+                                // this synthetic demo. Never approve or persist a new pin.
+                                dismissCertificate()
                             }
                             go(if (screen == "tor-log") Screen.TorLog else Screen.Settings)
                             delay(2_500); platform.markReady(screen)

@@ -43,6 +43,15 @@ class RuntimeEvidenceTest(unittest.TestCase):
         self.assertTrue(result["checks"]["lightningUsesTor"])
         self.assertTrue(result["checks"]["arkBackupRestored"])
 
+    def test_onion_retry_and_ip_peer_are_not_success(self):
+        for marker in [
+            "KW ln-live: onion attempt 1 not verified; peers {}",
+            "KW ln-live: connect Kilombino by onion: OK; peers {public=213.152.161.201:50002}",
+            "KW ln-live: connect Kilombino by onion: onion connection not verified; peers {}",
+        ]:
+            others = "\n".join(line for line in GOOD.splitlines() if "connect Kilombino" not in line)
+            self.assertFalse(runtime.check_engines(others + "\n" + marker)["passed"])
+
     def test_tls_rejection_preserved_not_called_successful_scan(self):
         result = runtime.check_engines(GOOD)
         self.assertIn("Error",result["electrumResult"][0])
