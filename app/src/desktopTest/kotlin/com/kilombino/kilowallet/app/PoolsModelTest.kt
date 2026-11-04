@@ -298,6 +298,19 @@ class PoolsModelTest {
         w.pools.detach()
     }
 
+    @Test fun broadcastInputStaysLockedUntilResolution() {
+        val w = Wallet("broadcast-reservation", listOf(50_000))
+        w.pools.attach(); w.pools.setEnabled(true)
+        try {
+            w.pools.create(20_000, 2.0, 2, 5, 1, 1, 1, null, w.utxos, PoolDest.HOT, null) {}
+            waitFor("pool created") { w.pools.state.value.rounds.isNotEmpty() }
+            w.round.phase = PoolSession.Phase.BROADCAST
+            w.round.postedSig = true
+            assertEquals(w.round.seat.coins.map { it.outpoint }.toSet(), w.pools.lockedOutpoints())
+            assertTrue(w.pools.waitingOutpoints().isEmpty())
+        } finally { w.pools.detach() }
+    }
+
     @Test fun openJoinCheckSignAndConfirm() {
         val a = Wallet("A", listOf(30_000, 15_000)); val b = Wallet("B", listOf(50_000))
         val tx = play(a, b, { w ->

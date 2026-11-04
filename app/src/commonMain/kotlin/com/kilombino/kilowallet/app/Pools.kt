@@ -274,7 +274,7 @@ class PoolsModel(
     // ------------------------------------------------------------------ coins and addresses
 
     /** Outpoints of rounds being built (outputs handed in, signatures asked): a normal send must leave them alone. */
-    fun lockedOutpoints(): Set<String> = sessions.values.filter { !it.done && it.state.phase in setOf(PoolSession.Phase.CLOSING, PoolSession.Phase.SIGNING) }
+    fun lockedOutpoints(): Set<String> = sessions.values.filter { !it.done && it.state.phase in setOf(PoolSession.Phase.CLOSING, PoolSession.Phase.SIGNING, PoolSession.Phase.BROADCAST) }
         .flatMap { s -> s.state.seat.coins.map { it.outpoint } }.toSet()
 
     /** Coins seated in a pool that has not started its round, outpoint → seat key: spendable, at the cost of the seat. */

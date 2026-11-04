@@ -813,7 +813,7 @@ class PoolSession(private val env: Env, private val s: State, private val socket
             }
             // A round closed again takes an abort from its creator only: a seat left out of it (an older
             // app waking up after the first closing ran out) would otherwise end the round for the rest.
-            "abort" -> if (!done && s.phase != Phase.BROADCAST && !(v3 && !fromCreator && s.closeSeq > 0)) {
+            "abort" -> if (!done && !hasSignedInput() && s.phase != Phase.BROADCAST && !(v3 && !fromCreator && s.closeSeq > 0)) {
                 s.phase = Phase.ABORTED; s.reason = o.optStr("reason", "aborted"); save()
                 // A member's abort can reach the creator before its own deadline does: the listing must
                 // still say the pool is over.
@@ -1032,6 +1032,10 @@ class PoolSession(private val env: Env, private val s: State, private val socket
             val mine = plan.coins.first { it.outpoint == c.outpoint }
             val sig = PoolTx.sign(plan, mine, privateKeys[i]).toHex()
             s.sigs[mine.outpoint] = sig
+            // Persist the irrevocable signing intent before a signature can leave this process.
+            // A missing relay acknowledgement does not prove that nobody received it.
+            s.postedSig = true
+            save()
             check(channel(J.obj("type" to "sig", "outpoint" to mine.outpoint, "sig" to sig))) { "the relay did not take our signature" }
         }
         s.postedSig = true; save()
@@ -1053,8 +1057,15 @@ class PoolSession(private val env: Env, private val s: State, private val socket
         env.event(Event.Broadcast(s.poolId, tx.txid))
     }
 
+    private fun hasSignedInput(): Boolean =
+        s.postedSig || s.seat.coins.any { it.outpoint in s.sigs }
+
     private suspend fun abort(reason: String) {
         if (done) return
+        if (hasSignedInput()) {
+            env.log("Signed round remains reserved: $reason")
+            return
+        }
         s.phase = Phase.ABORTED; s.reason = reason; save()
         // v3: the creator's from its own key, which every v3 wallet takes as the creator's.
         if (s.creator && terms.v3) creatorChannel(J.obj("type" to "abort", "reason" to reason))
@@ -1197,16 +1208,19 @@ class PoolSession(private val env: Env, private val s: State, private val socket
                     if (s.outSigs.isEmpty() && now - lastBlindSent > 30) sendBlind()
                     else if (s.outSigs.isNotEmpty() && !s.postedOutput) scheduleOutput()
                 } else if (terms.v3 && s.creator) listOutputsIfAll()
-                Phase.SIGNING -> if (now > s.phaseDeadline + 60) abort("not everyone signed in time")
+                Phase.SIGNING -> {
+                    // Retry a complete signed plan after a failed broadcast. A deadline cannot
+                    // revoke a signature another participant may already hold.
+                    buildPlan()?.let { maybeBroadcast(it) }
+                    if (s.phase == Phase.SIGNING && now > s.phaseDeadline + 60)
+                        abort("not everyone signed in time")
+                }
                 Phase.BROADCAST -> s.txid?.let { txid ->
                     val c = runCatching { env.confirmations(txid) }.getOrNull()
                     if (c != null && c >= 1) { s.phase = Phase.CONFIRMED; save(); env.event(Event.Confirmed(s.poolId, txid)); relay?.close(); relay = null }
-                    else if (c == null) {
-                        if (s.phaseDeadline > 0 && now > s.phaseDeadline + BROADCAST_GIVE_UP) {
-                            s.phase = Phase.ABORTED; s.reason = "the transaction never appeared: a coin of the round was spent elsewhere"
-                            save(); env.event(Event.Aborted(s.poolId, s.reason)); relay?.close(); relay = null
-                        }
-                    } else s.phaseDeadline = now // seen (unconfirmed): wait for it, however long it takes
+                    // Unknown history (including a failed lookup) is not proof of a conflicting
+                    // spend. Keep the reservation regardless of elapsed time.
+                    else if (c != null) s.phaseDeadline = now
                 }
                 else -> {}
             }
@@ -1218,7 +1232,6 @@ class PoolSession(private val env: Env, private val s: State, private val socket
     companion object {
         /** Reason of a round this wallet left on purpose: its card goes away by itself. */
         const val LEFT_BY_CHOICE = "you left this round"
-        const val BROADCAST_GIVE_UP = 12 * 3600L
         const val JOIN_TIMEOUT = 5 * 60
         const val VOTE_GRACE = 3 * 60L
         const val EXPIRY_WARN_SECONDS = 3600
