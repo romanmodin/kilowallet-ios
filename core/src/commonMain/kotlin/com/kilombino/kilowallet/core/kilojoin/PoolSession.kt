@@ -45,6 +45,8 @@ class PoolSession(private val env: Env, private val s: State, private val socket
         fun broadcast(rawHex: String): String
         /** Confirmations of [txid], 0 in the mempool, null when unknown. */
         fun confirmations(txid: String): Int?
+        /** A distinct six-deep transaction consuming a plan input, checked against chain history. */
+        fun buriedConflict(coins: List<PoolTx.Coin>, expectedTxid: String): String? = null
         fun save(state: State)
         fun event(e: Event)
         fun now(): Long = NostrEvent.nowSeconds()
@@ -289,7 +291,7 @@ class PoolSession(private val env: Env, private val s: State, private val socket
             delay(5_000)
             while (isActive) {
                 lock.withLock { tick() }
-                if (done && s.phase != Phase.BROADCAST) break
+                if (done && s.phase != Phase.CONFIRMED) break
                 delay(15_000)
             }
         }
@@ -1058,6 +1060,13 @@ class PoolSession(private val env: Env, private val s: State, private val socket
         lastRebroadcast = now
         val plan = buildPlan() ?: return
         if (PoolTx.txid(plan) != txid || checkPlan(plan) != null) return
+        val conflict = env.buriedConflict(plan.coins, txid)
+        if (conflict != null && conflict != txid && conflict.matches(Regex("[0-9a-f]{64}"))) {
+            s.phase = Phase.ABORTED
+            s.reason = "Round input spent by confirmed transaction: $conflict"
+            save(); env.event(Event.Aborted(s.poolId, s.reason)); relay?.close(); relay = null
+            return
+        }
         val witnesses = s.sigs.mapValues { Hashes.hexToBytes(it.value) }
         if (!plan.coins.all { coin -> witnesses[coin.outpoint]?.let { PoolTx.verify(plan, coin, it) } == true }) return
         val signed = PoolTx.assemble(plan, witnesses)
@@ -1169,9 +1178,30 @@ class PoolSession(private val env: Env, private val s: State, private val socket
 
     // ------------------------------------------------------------------------------- timers
 
+    /** Also used when the round screen returns while the process is still alive. */
+    fun refreshConfirmed() {
+        if (s.phase != Phase.CONFIRMED) return
+        scope.launch { lock.withLock { if (s.phase == Phase.CONFIRMED) checkConfirmed() } }
+    }
+
+    private var lastConfirmedCheck: Long? = null
+
+    private fun checkConfirmed() {
+        lastConfirmedCheck = env.now()
+        val id = s.txid ?: return
+        val observed = runCatching { env.confirmations(id) }
+        if (observed.isFailure || (observed.getOrNull() ?: 0) >= REQUIRED_CONFIRMATIONS) return
+        s.phase = Phase.BROADCAST; s.endedAt = 0L; save()
+        if (observed.getOrNull() == null) runCatching { rebroadcastIfMissing(id, env.now()) }
+    }
+
     private suspend fun tick() {
         runCatching {
             val now = env.now()
+            if (s.phase == Phase.CONFIRMED) {
+                if (lastConfirmedCheck?.let { now - it in 0 until 300L } != true) checkConfirmed()
+                return@runCatching
+            }
             ensureConnected()
             if (s.creator && s.phase in setOf(Phase.OPEN, Phase.VOTING) && now - lastAnnounce > Protocol.HEARTBEAT) announce()
             if (!s.creator && s.phase in setOf(Phase.JOINING, Phase.OPEN, Phase.VOTING) && listedAt > 0 &&
@@ -1233,7 +1263,15 @@ class PoolSession(private val env: Env, private val s: State, private val socket
                 Phase.SIGNING -> {
                     // Retry a complete signed plan after a failed broadcast. A deadline cannot
                     // revoke a signature another participant may already hold.
-                    buildPlan()?.let { maybeBroadcast(it) }
+                    buildPlan()?.let { plan ->
+                        if (hasSignedInput() && now > s.phaseDeadline && s.txid == null) {
+                            val expected = PoolTx.txid(plan)
+                            val seen = runCatching { env.confirmations(expected) }
+                            if (seen.getOrNull() != null) {
+                                s.txid = expected; s.phase = Phase.BROADCAST; save()
+                            } else if (seen.isSuccess) rebroadcastIfMissing(expected, now)
+                        } else maybeBroadcast(plan)
+                    }
                     if (s.phase == Phase.SIGNING && now > s.phaseDeadline + 60)
                         abort("not everyone signed in time")
                 }

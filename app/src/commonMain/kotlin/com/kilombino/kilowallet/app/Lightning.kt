@@ -392,7 +392,11 @@ class LightningModel(private val platform: AppPlatform) {
     /** Connects to Kilombino's node (its name, then its onion when LND has Tor); true when connected. */
     suspend fun connectKilombino(): Boolean {
         val errors = ArrayList<String>()
-        for (t in Lnd.resolved(Kilombino.HOSTS) + (if (torOn) listOf(Kilombino.ONION) else emptyList())) {
+        // The isolated simulator probe must not race a direct-IP autoconnect.
+        val targets = if (platform.demoScreen == "ln-live") {
+            if (torOn) listOf(Kilombino.ONION) else emptyList()
+        } else Lnd.resolved(Kilombino.HOSTS) + (if (torOn) listOf(Kilombino.ONION) else emptyList())
+        for (t in targets) {
             val r = runCatching { Lnd.connect(Kilombino.NODE, t) }
             if (r.isSuccess) { linked = true; linkError = null; return true }
             errors += "$t: ${r.exceptionOrNull()?.message}"

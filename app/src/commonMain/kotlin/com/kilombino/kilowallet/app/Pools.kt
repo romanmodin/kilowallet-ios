@@ -37,6 +37,42 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.coroutines.resume
 
+internal fun findBuriedConflict(
+    coins: List<PoolTx.Coin>, expectedTxid: String, isUnspent: (PoolTx.Coin, String) -> Boolean,
+    history: (String) -> List<ElectrumClient.HistoryItem>, transaction: (String) -> String, height: () -> Int
+): String? {
+    for (coin in coins) {
+        val sh = Address.electrumScriptHash(coin.script)
+        fun unspent() = isUnspent(coin, sh)
+        if (unspent()) continue
+        val first = history(sh)
+        if (first.any { it.txid == expectedTxid }) continue
+        val tip = height()
+        for (entry in first) {
+            if (entry.txid == expectedTxid || entry.txid == coin.txid ||
+                entry.height !in 1..(tip - PoolSession.REQUIRED_CONFIRMATIONS + 1)) continue
+            val raw = transaction(entry.txid)
+            if (!matchesConflict(raw, entry.txid, coin, expectedTxid)) continue
+            // Re-read after fetching the bytes. A disappeared, moved or shallow
+            // history entry or a restored output invalidates the observation.
+            val latest = history(sh)
+            if (entry in latest && latest.none { it.txid == expectedTxid } && !unspent() &&
+                height() - entry.height + 1 >= PoolSession.REQUIRED_CONFIRMATIONS)
+                return entry.txid
+        }
+    }
+    return null
+}
+
+internal fun matchesConflict(raw: String, listedId: String, coin: PoolTx.Coin, expectedId: String): Boolean {
+    if (listedId == expectedId || listedId == coin.txid) return false
+    return runCatching {
+        val tx = com.kilombino.kilowallet.core.crypto.TxParse.parse(raw)
+        com.kilombino.kilowallet.core.crypto.TxParse.txid(tx) == listedId &&
+            tx.inputs.any { it.txid == coin.txid && it.vout == coin.vout }
+    }.getOrDefault(false)
+}
+
 /** Where a seat's equal outputs go: this wallet's fresh addresses, a watch-only key's, or (a payment) the recipients'. */
 enum class PoolDest { HOT, WATCH, PAY }
 
@@ -137,7 +173,10 @@ class PoolsModel(
     }
 
     /** The app came back to the screen: rounds whose relay connection iOS cut reconnect on their next tick. */
-    fun resume() = startAll()
+    fun resume() {
+        startAll()
+        if (!demo) sessions.values.forEach { it.refreshConfirmed() }
+    }
 
     private fun persist() {
         val zpub = loadedFor ?: return
@@ -190,6 +229,11 @@ class PoolsModel(
     private fun env(st: PoolSession.State): PoolSession.Env = object : PoolSession.Env {
         override fun coinUnspent(coin: PoolTx.Coin): Boolean = electrum { c ->
             c.listUnspent(Address.electrumScriptHash(coin.script)).any { it.txid == coin.txid && it.vout == coin.vout && it.value == coin.value }
+        }
+        override fun buriedConflict(coins: List<PoolTx.Coin>, expectedTxid: String): String? = electrum { c ->
+            findBuriedConflict(coins, expectedTxid,
+                { coin, sh -> c.listUnspent(sh).any { it.txid == coin.txid && it.vout == coin.vout } },
+                c::history, c::transaction, c::blockHeight)
         }
         override fun broadcast(rawHex: String): String = electrum { it.broadcast(rawHex) }
         override fun confirmations(txid: String): Int? = electrum { c ->

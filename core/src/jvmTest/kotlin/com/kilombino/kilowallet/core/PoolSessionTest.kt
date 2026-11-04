@@ -88,6 +88,7 @@ class PoolSessionTest {
     class Chain {
         val utxos = java.util.concurrent.ConcurrentHashMap<String, Long>()
         val txs = CopyOnWriteArrayList<String>()
+        @Volatile var confirmedConflict: String? = null
         val mined = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         @Synchronized fun broadcast(raw: String): String {
             val tx = TxParse.parse(raw)
@@ -104,6 +105,7 @@ class PoolSessionTest {
         override fun now(): Long = NostrEvent.nowSeconds() + ahead
         override fun coinUnspent(coin: PoolTx.Coin) = chain.utxos[coin.outpoint] == coin.value
         override fun broadcast(rawHex: String) = chain.broadcast(rawHex)
+        override fun buriedConflict(coins: List<PoolTx.Coin>, expectedTxid: String) = chain.confirmedConflict
         override fun confirmations(txid: String): Int? = when {
             txid in chain.mined -> 6
             chain.txs.any { TxParse.txid(TxParse.parse(it)) == txid } -> 0
@@ -198,10 +200,29 @@ class PoolSessionTest {
             val restored = PoolSession.State.parse(stored)
             restored.restoreSignedReservation()
             assertEquals(PoolSession.Phase.BROADCAST, restored.phase)
-            session("restored signer", restored)
+            val live = session("restored signer", restored)
             waitFor("original transaction rebroadcast after restart", 40) { chain.txs.isNotEmpty() }
             assertEquals(raw, chain.txs.single())
             assertEquals(PoolSession.Phase.BROADCAST, restored.phase)
+            chain.mined.add(TxParse.txid(tx))
+            waitFor("restored round confirmed", 40) { restored.phase == PoolSession.Phase.CONFIRMED }
+            ahead += 120
+            chain.mined.clear(); chain.txs.clear()
+            plan.coins.forEach { chain.utxos[it.outpoint] = it.value }
+            live.refreshConfirmed()
+            waitFor("foreground reorg rebroadcast", 30) { chain.txs.isNotEmpty() }
+            assertEquals(raw, chain.txs.single())
+            assertEquals(PoolSession.Phase.BROADCAST, restored.phase)
+            chain.mined.add(TxParse.txid(tx))
+            waitFor("confirmed before conflict", 40) { restored.phase == PoolSession.Phase.CONFIRMED }
+            ahead += 120
+            chain.mined.clear(); chain.txs.clear()
+            chain.confirmedConflict = "aa".repeat(32)
+            live.refreshConfirmed()
+            waitFor("confirmed conflicting spend", 30) { restored.phase == PoolSession.Phase.ABORTED }
+            assertTrue(chain.txs.isEmpty())
+            assertTrue(restored.reason.contains(chain.confirmedConflict!!))
+
         }
         tx
     }

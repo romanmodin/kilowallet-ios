@@ -314,6 +314,39 @@ class PoolsModelTest {
         } finally { w.pools.detach() }
     }
 
+    @Test fun conflictRequiresExactTransactionAndOutpoint() {
+        val id = "11".repeat(32)
+        val raw = "0200000001" + id + "0100000000ffffffff010100000000000000015100000000"
+        val listed = TxParse.txid(TxParse.parse(raw))
+        val coin = PoolTx.Coin(id, 1, 50_000, ByteArray(33))
+        assertTrue(matchesConflict(raw, listed, coin, "22".repeat(32)))
+        assertTrue(!matchesConflict(raw, listed, coin.copy(vout = 0), "22".repeat(32)))
+        assertTrue(!matchesConflict(raw, "aa".repeat(32), coin, "22".repeat(32)))
+        assertTrue(!matchesConflict(raw, listed, coin, listed))
+        assertTrue(!matchesConflict("ff", listed, coin, "22".repeat(32)))
+    }
+
+    @Test fun conflictDepthAndReorgBoundaries() {
+        val id = "11".repeat(32)
+        val raw = "0200000001" + id + "0100000000ffffffff010100000000000000015100000000"
+        val listed = TxParse.txid(TxParse.parse(raw))
+        val coin = PoolTx.Coin(id, 1, 50_000, ByteArray(33))
+        fun observed(h: Int, later: Int? = h, unspentOnRecheck: Boolean = false): String? {
+            var queries = 0
+            var utxoReads = 0
+            return findBuriedConflict(listOf(coin), "22".repeat(32),
+                { _, _ -> ++utxoReads > 1 && unspentOnRecheck },
+                { (if (++queries == 1) h else later)?.let {
+                    listOf(com.kilombino.kilowallet.core.chain.ElectrumClient.HistoryItem(listed, it))
+                }.orEmpty() }, { raw }, { 105 })
+        }
+        assertEquals(listed, observed(100))
+        for (shallow in listOf(-1, 0, 101, 102, 103, 104, 105)) assertEquals(null, observed(shallow))
+        assertEquals(null, observed(100, null))
+        assertEquals(null, observed(100, 104))
+        assertEquals(null, observed(100, unspentOnRecheck = true))
+    }
+
     @Test fun openJoinCheckSignAndConfirm() {
         val a = Wallet("A", listOf(30_000, 15_000)); val b = Wallet("B", listOf(50_000))
         val tx = play(a, b, { w ->

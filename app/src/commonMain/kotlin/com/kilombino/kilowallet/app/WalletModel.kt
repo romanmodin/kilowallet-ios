@@ -1556,7 +1556,9 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         var how = "ONION_NOT_VERIFIED"
         var peers = "{}"
         for (attempt in 1..3) {
-            runCatching { ln.disconnect(k.NODE) }
+            val existing = runCatching { ln.peerAddresses() }.getOrDefault(emptyMap())
+            if (existing[k.NODE] == k.ONION) { peers = existing.toString(); how = "OK"; break }
+            if (existing.containsKey(k.NODE)) runCatching { ln.disconnect(k.NODE) }
             delay(5_000)
             val result = withTimeoutOrNull(90_000) {
                 val connected = runCatching { ln.connect(k.NODE, k.ONION) }
