@@ -31,6 +31,18 @@ class RuntimeEvidenceTest(unittest.TestCase):
         self.assertFalse(runtime.check_engines(GOOD.replace("[(public, [test.onion:9911], true)]", "[]"))["passed"])
     def test_failed_ark_restore_rejected(self):
         self.assertFalse(runtime.check_engines(GOOD.replace("ArkModel.View.Ready", "ArkModel.View.Failed"))["passed"])
+    def test_actual_tor_sync_timeout_is_not_native_success(self):
+        # Exact diagnostic markers from failed run 41792640577. GetInfo and an
+        # exportable empty SCB are insufficient while the main RPC still starts.
+        failed = (Path(__file__).parent / "fixtures" / "ln-startup-41792640577.txt").read_text()
+        others = "\n".join(line for line in GOOD.splitlines() if "KW ln-live:" not in line)
+        result = runtime.check_engines(others + "\n" + failed)
+        self.assertFalse(result["passed"])
+        for name in ("onionPeerConnected", "watchtowerRegistered", "emptyChannelBackupRpc"):
+            self.assertFalse(result["checks"][name], name)
+        self.assertTrue(result["checks"]["lightningUsesTor"])
+        self.assertTrue(result["checks"]["arkBackupRestored"])
+
     def test_tls_rejection_preserved_not_called_successful_scan(self):
         result = runtime.check_engines(GOOD)
         self.assertIn("Error",result["electrumResult"][0])

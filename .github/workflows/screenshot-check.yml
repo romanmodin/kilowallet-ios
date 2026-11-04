@@ -34,3 +34,13 @@ jobs:
           result=$?
           set -e
           test "$result" -eq 1
+          # Preserve the actual wrong/blank frames from run 41792640577.
+          for fixture in restore-springboard tor-live-blank; do
+            expected='Restore from words'
+            [ "$fixture" = tor-live-blank ] && expected='Settings'
+            set +e
+            /tmp/check-screen "scripts/fixtures/$fixture.png" "$expected"
+            result=$?
+            set -e
+            test "$result" -eq 1
+          done

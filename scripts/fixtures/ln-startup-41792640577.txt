@@ -1,0 +1,5 @@
+KW ln-live: node running, Tor in LND: true, SOCKS 60451
+KW ln-live: waiting for native server/tower; info: Info(pubkey=02faeca8e7361ff87b57c7a049733d0264fd3f64e4f3e94d97926bb7eb5439f176, alias=Kilowallet-d8a0, height=975000, syncedChain=false, syncedGraph=false, peers=0, active=0, pending=0, headerTime=1790850599)
+KW ln-live: towers []
+KW ln-live: connect Kilombino by onion: rpc error: code = Unknown desc = server is still in the process of starting; peers {}
+KW ln-live: own channel backup 45 bytes; RestoreChannelBackups by RPC: rpc error: code = Unknown desc = server is still in the process of starting

@@ -96,7 +96,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
   case "$base" in pool*) limit=90 ;; esac
   # The real Lightning engine: LND starts, makes a throwaway wallet and syncs with the chain's peers.
   # Tor first (up to 3 min), then the node, the watchtower and Kilombino's node by its onion.
-  [ "$base" = ln-live ] && limit=1300
+  [ "$base" = ln-live ] && limit=1900
   # The real Tor (Arti in the app): it bootstraps, then the Electrum server is reached through it.
   { [ "$base" = tor-live ] || [ "$base" = tor-log ]; } && limit=420
   # The real Ark engine: it starts, makes a throwaway wallet on the Ark server and hands out an address.
@@ -134,6 +134,8 @@ for screen in welcome history create restore watch home simple lightning ln-star
     wallets) expected="Wallets" ;;
     history) expected="Mining payout" ;;
     simple) expected="advanced" ;;
+    restore) expected="Restore from words" ;;
+    tor-live) expected="Settings" ;;
     private) expected="Balance hidden" ;;
     note) expected="October test payout" ;;
     request) expected="Requested amount" ;;
@@ -150,6 +152,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
     done
     if [ "$rendered" != true ]; then
       echo "$screen: rendered screen did not match readiness marker"
+      capture_failure_diagnostics rendered
       failures=$((failures + 1))
     else
       echo "$screen: visible title verified"

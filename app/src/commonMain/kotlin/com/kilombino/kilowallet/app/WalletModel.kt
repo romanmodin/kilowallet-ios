@@ -1537,8 +1537,11 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         if (!lightning.torOn) return
         // GetInfo can answer while the full server is still starting. The demo's
         // checks require the tower RPC and peer startup to finish, not just GetInfo.
-        // Bound this wait inside the runner's existing 1300-second budget.
-        withTimeoutOrNull(600_000) {
+        // A clean activation-date recovery can outlast ten minutes over Tor.
+        // Run 41792640577 finished recovery two minutes after that old deadline.
+        // Keep actual tower/peer/backup success required, within the runner's
+        // 1900-second readiness budget; this changes only the CI demo wait.
+        withTimeoutOrNull(1_200_000) {
             while (runCatching { ln.towers() }.getOrDefault(emptyList()).isEmpty()) {
                 println("KW ln-live: waiting for native server/tower; info: " +
                     runCatching { ln.info().toString() }.getOrElse { it.message ?: "unavailable" })
