@@ -133,6 +133,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
     review) expected="Review" ;;
     wallets) expected="Wallets" ;;
     history) expected="Mining payout" ;;
+    simple) expected="advanced" ;;
     private) expected="Balance hidden" ;;
     note) expected="October test payout" ;;
     request) expected="Requested amount" ;;

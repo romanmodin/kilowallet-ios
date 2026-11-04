@@ -1608,7 +1608,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                             WalletInfo(WalletCatalog.idFor(watch), "Watch-only", WalletKind.WATCH, watch))) }
                         go(Screen.Wallets); platform.markReady(screen)
                     }
-                    "history", "private", "note", "export", "filters", "units" -> {
+                    "history", "simple", "private", "note", "export", "filters", "units" -> {
                         val txid = "ab".repeat(32)
                         val note = TransactionNote("Mining payout", "October test payout")
                         val notes = transactionNotes.save(zpub, txid, note.label, note.note)
@@ -1617,7 +1617,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                             txs = listOf(TxConf(txid, 12, false, 250_000, height = 970_000),
                                 TxConf("cd".repeat(32), 0, true, -25_000)),
                             height = 970_011, scan = ScanPhase.Done, lastSyncedAt = platform.nowMillis(),
-                            notes = notes, hideAmounts = screen == "private", amountUnit = if (screen == "units") AmountUnit.XBT else AmountUnit.SATS) }
+                            notes = notes, simple = screen == "simple", hideAmounts = screen == "private", amountUnit = if (screen == "units") AmountUnit.XBT else AmountUnit.SATS) }
                         if (screen != "history") platform.markReady(screen) // History signals after its rows are laid out.
                     }
                     "home" -> scan()
@@ -1690,7 +1690,6 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         }
                         ark.activate(words, "")
                     }
-                    "simple" -> { _state.update { it.copy(simple = true) }; scan() }
                     "locked" -> { _state.update { it.copy(locked = true) }; platform.markReady(screen) }
                     "replace" -> {
                         // A made-up pending send, only so the cancel screen has something to show.
