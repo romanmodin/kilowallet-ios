@@ -17,6 +17,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.kilombino.kilowallet.app.AppPlatform
@@ -37,6 +38,11 @@ fun App(platform: AppPlatform, model: WalletModel = remember { WalletModel(platf
     LaunchedEffect(lang) { I18n.ensure(lang) }
     LaunchedEffect(Unit) {
         demo?.let {
+            // Swift's selected-case marker precedes Kotlin and Compose startup.
+            // Let the first UI frame complete before CI times screen preparation.
+            withFrameNanos { }
+            withFrameNanos { }
+            platform.markReady("ui-" + platform.demoScreen)
             I18n.ensure(I18n.lang.value) // the screenshot waits for the table, not English first
             model.setUpDemo(it)
         }

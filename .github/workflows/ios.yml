@@ -42,7 +42,9 @@ jobs:
           test "${sdk%%.*}" -ge 26
 
       - name: Test native runtime evidence checker
-        run: python3 scripts/test-runtime-check.py
+        run: |
+          python3 scripts/test-runtime-check.py
+          python3 scripts/test-ui-startup.py
 
       - name: Unit tests (JVM and iOS simulator)
         run: ./gradlew :core:jvmTest :core:iosX64Test :app:desktopTest :app:iosX64Test --stacktrace

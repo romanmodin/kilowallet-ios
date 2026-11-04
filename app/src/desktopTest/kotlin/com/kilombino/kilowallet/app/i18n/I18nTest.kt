@@ -164,6 +164,7 @@ class I18nTest {
 
     /** Not shown, or the same in every language: demo and preference keys, units, numbers, names. */
     private val neutral = listOf(
+        "ui-", // Internal first-frame marker prefix; never displayed or translated.
         // Public RSA modulus/exponent in the display fixture, not UI prose.
         com.kilombino.kilowallet.app.ScreenshotPoolFixture.BLIND_PUBLIC,
         // Official public screenshot wallet identifier; identical in every locale.

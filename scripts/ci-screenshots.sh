@@ -38,6 +38,17 @@ capture_lnd_log() {
   fi
 }
 
+capture_failure_diagnostics() {
+  local phase="$1"
+  xcrun simctl io "$UDID" screenshot "$OUT/$phase-failed-$name.png" || true
+  local pid
+  pid=$(awk -F': ' 'NF == 2 { print $2 }' "screenshots-logs/$name.launch" | tail -1)
+  if [[ "$pid" =~ ^[0-9]+$ ]]; then
+    sample "$pid" 5 -file "screenshots-logs/$name.$phase.sample.txt" || true
+  fi
+  xcrun simctl spawn "$UDID" log show --last 3m --style compact     --predicate 'process == "Kilowallet"' >"screenshots-logs/$name.$phase.system.log" 2>&1 || true
+}
+
 n=0
 failures=0
 for screen in welcome history create restore watch home simple lightning ln-starting ln-running ln-failed ark locked receive send review replace settings pool-intro pools pool-join pool-create pool-pay pool-round home@es receive@es settings@es lightning@es ln-running@es pools@es pool-round@zh home@zh dice backup cpfp receive-taproot settings-taproot pool-history psbt immature dice@es backup@es pool-history@es psbt@es ark-ready ark-ready@es ark@es ln-bridge ln-move settings-notify ln-bridge@es ark-live tor-live tor-log ln-live wallets private note request export coins recipients filters units backup-check; do
@@ -48,7 +59,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
   xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
   DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" data)
   mkdir -p "$DATA/Documents"
-  rm -f "$DATA/Documents/kw-ready-$base" "$DATA/Documents/kw-demo-selected"
+  rm -f "$DATA/Documents/kw-ready-$base" "$DATA/Documents/kw-demo-selected" "$DATA/Documents/kw-ready-ui-$screen"
   printf %s "$screen" > "$DATA/Documents/kw-demo-case"
   # Let simctl finish launching before polling, without attaching a terminal whose
   # teardown can race the following launch. Keep each app's own stdout/stderr.
@@ -65,16 +76,22 @@ for screen in welcome history create restore watch home simple lightning ln-star
   done
   if [ "$selected" != "$screen" ]; then
     echo "$screen: startup failed; selected: ${selected:-none}"
-    xcrun simctl io "$UDID" screenshot "$OUT/startup-failed-$name.png" || true
-    pid=$(awk -F': ' 'NF == 2 { print $2 }' "screenshots-logs/$name.launch" | tail -1)
-    if [[ "$pid" =~ ^[0-9]+$ ]]; then
-      sample "$pid" 5 -file "screenshots-logs/$name.sample.txt" || true
-    fi
-    xcrun simctl spawn "$UDID" log show --last 3m --style compact \
-      --predicate 'process == "Kilowallet"' >"screenshots-logs/$name.system.log" 2>&1 || true
+    capture_failure_diagnostics startup
     exit 1
   fi
   echo "$screen: startup selected exact case after ${startup}s"
+  # BEGIN UI startup wait: selection in Swift alone does not prove Compose rendered.
+  for ui_startup in $(seq 1 120); do
+    [ -f "$DATA/Documents/kw-ready-ui-$screen" ] && break
+    sleep 1
+  done
+  if [ ! -f "$DATA/Documents/kw-ready-ui-$screen" ]; then
+    echo "$screen: Compose UI did not start"
+    capture_failure_diagnostics ui-startup
+    exit 1
+  fi
+  echo "$screen: Compose UI started after ${ui_startup}s"
+  # END UI startup wait
   limit=20; { [ "$base" = home ] || [ "$base" = simple ] || [ "$base" = immature ]; } && limit=150
   case "$base" in pool*) limit=90 ;; esac
   # The real Lightning engine: LND starts, makes a throwaway wallet and syncs with the chain's peers.
@@ -93,7 +110,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
   if [ "$selected" = "$screen" ] && [ -f "$DATA/Documents/kw-ready-$base" ]; then echo "$screen: ready after ${i}s"; else
     echo "$screen: NOT ready after ${limit}s"
     if [ "$base" = ln-live ]; then capture_lnd_log; fi
-    xcrun simctl io "$UDID" screenshot "$OUT/failed-$name.png" || true
+    capture_failure_diagnostics readiness
     exit 1
   fi
   sleep 3
