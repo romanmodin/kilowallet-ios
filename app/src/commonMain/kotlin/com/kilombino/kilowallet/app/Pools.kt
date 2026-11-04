@@ -570,7 +570,7 @@ class PoolsModel(
         _state.update { it.copy(enabled = true) }
         val now = NostrEvent.nowSeconds()
         // One pool's keys for all of them (made-up pools: only their terms are shown).
-        val base = PoolSession.newPool(50_000, 2.0, 5, 6, now = now - 1800)
+        val base = ScreenshotPoolFixture.create(now - 1800)
         fun terms(amount: Long, outputs: Int, peers: Int, rate: Double, payments: List<Long> = emptyList(), private: Boolean = false) =
             base.terms.copy(id = Hashes.sha256("demo$amount$outputs".encodeToByteArray()).toHex().take(16), amount = amount, outputs = outputs,
                 peers = peers, feeRate = rate, payments = payments, private = private, createdAt = now - 600,
