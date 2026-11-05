@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   verify:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +25,30 @@ jobs:
           /tmp/check-screen scripts/fixtures/note-screen.png 'Mining payout'
           set +e
           /tmp/check-screen scripts/fixtures/note-screen.png 'November test payout'
+          result=$?
+          set -e
+          test "$result" -eq 1
+          # Actual black simulator capture must never count as a rendered simple screen.
+          set +e
+          /tmp/check-screen scripts/fixtures/simple-blank.png 'advanced'
+          result=$?
+          set -e
+          test "$result" -eq 1
+          # Preserve the actual wrong/blank frames from run 41792640577.
+          for fixture in restore-springboard tor-live-blank; do
+            expected='Restore from words'
+            [ "$fixture" = tor-live-blank ] && expected='Settings'
+            set +e
+            /tmp/check-screen "scripts/fixtures/$fixture.png" "$expected"
+            result=$?
+            set -e
+            test "$result" -eq 1
+          done
+
+          # Actual wrong English frame and correct Spanish frame from run 41859580775.
+          /tmp/check-screen scripts/fixtures/ln-running-es.png '460 550'
+          set +e
+          /tmp/check-screen scripts/fixtures/ln-running-welcome.png '460 550'
           result=$?
           set -e
           test "$result" -eq 1

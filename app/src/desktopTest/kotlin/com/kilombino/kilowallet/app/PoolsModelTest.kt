@@ -54,6 +54,7 @@ class PoolsModelTest {
     class Relay : WebSocketFactory {
         private val stored = CopyOnWriteArrayList<NostrEvent>()
         private val conns = CopyOnWriteArrayList<Conn>()
+        fun hasAnnouncement(poolId: String) = stored.any { it.kind == Protocol.KIND_POOL && it.tag("d") == poolId }
         inner class Conn(val l: WebSocketListener) : WebSocket {
             val subs = java.util.concurrent.ConcurrentHashMap<String, List<JsonObject>>()
             override fun send(text: String): Boolean { handle(this, text); return true }
@@ -128,14 +129,17 @@ class PoolsModelTest {
             return id
         }
 
-        @Synchronized fun mine() {
+        private var tip = 100
+        @Synchronized fun mine(blocks: Int) {
+            require(blocks >= 1)
+            tip += blocks
             utxos.values.flatten().forEach { if (it.height == 0) it.height = 101 }
             history.values.forEach { l -> l.replaceAll { (t, h) -> t to if (h == 0) 101 else h } }
         }
 
         @Synchronized fun answer(method: String, p: JsonArray): JsonElement = when (method) {
             "server.version" -> JsonArray(listOf(JsonPrimitive("Fake 1.0"), JsonPrimitive("1.4")))
-            "blockchain.headers.subscribe" -> buildJsonObject { put("height", 101); put("hex", "000000a0700c8b9690014507c6c277900d743ac3ed6d814f90772d060000000000000000670caeac2404c80798669b242623ea7310be8f47166168e9734baab9dec80446b2c2c66a2ad80019be9815dad0f4b1da0000000000000000b10cf8578500000000000000b2c2c66a7501000000000000000000000000000000000000d6e40e000000000000000000000000000000000000000000000000000000000000000000") }
+            "blockchain.headers.subscribe" -> buildJsonObject { put("height", tip); put("hex", "000000a0700c8b9690014507c6c277900d743ac3ed6d814f90772d060000000000000000670caeac2404c80798669b242623ea7310be8f47166168e9734baab9dec80446b2c2c66a2ad80019be9815dad0f4b1da0000000000000000b10cf8578500000000000000b2c2c66a7501000000000000000000000000000000000000d6e40e000000000000000000000000000000000000000000000000000000000000000000") }
             "blockchain.scripthash.listunspent" -> JsonArray(utxos[p[0].jsonPrimitive.content].orEmpty().map { u ->
                 buildJsonObject { put("tx_hash", u.txid); put("tx_pos", u.vout); put("value", u.value); put("height", u.height) } })
             "blockchain.scripthash.get_history" -> JsonArray(history[p[0].jsonPrimitive.content].orEmpty().map { (t, h) ->
@@ -224,6 +228,11 @@ class PoolsModelTest {
         a.pools.setEnabled(true); b.pools.setEnabled(true)
         open(a)
         waitFor("A's pool open") { a.pools.state.value.rounds.singleOrNull()?.phase == PoolSession.Phase.OPEN }
+        // OPEN is persisted before creatorStart publishes the announcement. Also wait
+        // for setEnabled's initial list request: refreshPools ignores calls while loading.
+        // These are observable barriers, not a retry or a longer timeout.
+        waitFor("A's pool announced") { relay.hasAnnouncement(a.round.poolId) }
+        waitFor("B's initial list completed") { !b.pools.state.value.loading }
         b.pools.refreshPools()
         waitFor("B sees it") { b.pools.state.value.open?.any { it.id == a.round.poolId } == true }
         val t = b.pools.state.value.open!!.first { it.id == a.round.poolId }
@@ -239,7 +248,7 @@ class PoolsModelTest {
         a.pools.sign(t.id); b.pools.sign(t.id)
         waitFor("sent") { a.round.txid != null && b.round.txid != null }
         assertEquals(1, chain.sent.size)
-        chain.mine()
+        chain.mine(6)
         waitFor("confirmed", 40) { a.round.phase == PoolSession.Phase.CONFIRMED && b.round.phase == PoolSession.Phase.CONFIRMED }
         return TxParse.parse(chain.sent.single())
     }
@@ -290,6 +299,52 @@ class PoolsModelTest {
         assertEquals(4, book.next(w.zpub, 1), "ordinary Send must not hand out the pool change")
         assertTrue(chain.sent.isEmpty())
         w.pools.detach()
+    }
+
+    @Test fun broadcastInputStaysLockedUntilResolution() {
+        val w = Wallet("broadcast-reservation", listOf(50_000))
+        w.pools.attach(); w.pools.setEnabled(true)
+        try {
+            w.pools.create(20_000, 2.0, 2, 5, 1, 1, 1, null, w.utxos, PoolDest.HOT, null) {}
+            waitFor("pool created") { w.pools.state.value.rounds.isNotEmpty() }
+            w.round.phase = PoolSession.Phase.BROADCAST
+            w.round.postedSig = true
+            assertEquals(w.round.seat.coins.map { it.outpoint }.toSet(), w.pools.lockedOutpoints())
+            assertTrue(w.pools.waitingOutpoints().isEmpty())
+        } finally { w.pools.detach() }
+    }
+
+    @Test fun conflictRequiresExactTransactionAndOutpoint() {
+        val id = "11".repeat(32)
+        val raw = "0200000001" + id + "0100000000ffffffff010100000000000000015100000000"
+        val listed = TxParse.txid(TxParse.parse(raw))
+        val coin = PoolTx.Coin(id, 1, 50_000, ByteArray(33))
+        assertTrue(matchesConflict(raw, listed, coin, "22".repeat(32)))
+        assertTrue(!matchesConflict(raw, listed, coin.copy(vout = 0), "22".repeat(32)))
+        assertTrue(!matchesConflict(raw, "aa".repeat(32), coin, "22".repeat(32)))
+        assertTrue(!matchesConflict(raw, listed, coin, listed))
+        assertTrue(!matchesConflict("ff", listed, coin, "22".repeat(32)))
+    }
+
+    @Test fun conflictDepthAndReorgBoundaries() {
+        val id = "11".repeat(32)
+        val raw = "0200000001" + id + "0100000000ffffffff010100000000000000015100000000"
+        val listed = TxParse.txid(TxParse.parse(raw))
+        val coin = PoolTx.Coin(id, 1, 50_000, ByteArray(33))
+        fun observed(h: Int, later: Int? = h, unspentOnRecheck: Boolean = false): String? {
+            var queries = 0
+            var utxoReads = 0
+            return findBuriedConflict(listOf(coin), "22".repeat(32),
+                { _, _ -> ++utxoReads > 1 && unspentOnRecheck },
+                { (if (++queries == 1) h else later)?.let {
+                    listOf(com.kilombino.kilowallet.core.chain.ElectrumClient.HistoryItem(listed, it))
+                }.orEmpty() }, { raw }, { 105 })
+        }
+        assertEquals(listed, observed(100))
+        for (shallow in listOf(-1, 0, 101, 102, 103, 104, 105)) assertEquals(null, observed(shallow))
+        assertEquals(null, observed(100, null))
+        assertEquals(null, observed(100, 104))
+        assertEquals(null, observed(100, unspentOnRecheck = true))
     }
 
     @Test fun openJoinCheckSignAndConfirm() {

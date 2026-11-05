@@ -106,6 +106,21 @@ class WalletModelTest {
         assertEquals(0, platform.loadCalls)
     }
 
+    @Test fun simplePreviewRendersOfflineWithoutReadingSecrets() = checkModel { model, platform ->
+        platform.demoScreen = "simple"
+        model.setUpDemo("simple")
+        advanceUntilIdle()
+        model.refresh()
+        advanceUntilIdle()
+        assertTrue(model.state.value.simple)
+        assertEquals(250_000L, model.state.value.total)
+        assertTrue(model.state.value.scan is ScanPhase.Done)
+        assertNull(model.state.value.certChanged)
+        assertEquals(0, platform.connections)
+        assertEquals(0, platform.loadCalls)
+        assertEquals(0, platform.saveCalls)
+    }
+
     private fun checkModel(block: suspend TestScope.(WalletModel, FakePlatform) -> Unit) = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)

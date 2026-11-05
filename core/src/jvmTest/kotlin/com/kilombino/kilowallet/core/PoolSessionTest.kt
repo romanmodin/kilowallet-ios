@@ -88,6 +88,7 @@ class PoolSessionTest {
     class Chain {
         val utxos = java.util.concurrent.ConcurrentHashMap<String, Long>()
         val txs = CopyOnWriteArrayList<String>()
+        @Volatile var confirmedConflict: String? = null
         val mined = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         @Synchronized fun broadcast(raw: String): String {
             val tx = TxParse.parse(raw)
@@ -101,10 +102,12 @@ class PoolSessionTest {
 
     inner class Env(val name: String, val chain: Chain) : PoolSession.Env {
         val events = CopyOnWriteArrayList<String>()
+        override fun now(): Long = NostrEvent.nowSeconds() + ahead
         override fun coinUnspent(coin: PoolTx.Coin) = chain.utxos[coin.outpoint] == coin.value
         override fun broadcast(rawHex: String) = chain.broadcast(rawHex)
+        override fun buriedConflict(coins: List<PoolTx.Coin>, expectedTxid: String) = chain.confirmedConflict
         override fun confirmations(txid: String): Int? = when {
-            txid in chain.mined -> 1
+            txid in chain.mined -> 6
             chain.txs.any { TxParse.txid(TxParse.parse(it)) == txid } -> 0
             else -> null
         }
@@ -113,12 +116,17 @@ class PoolSessionTest {
         override fun log(msg: String) { if (System.getenv("KW_DEBUG") != null) println("[$name] $msg") }
     }
 
+    /** Seconds every wallet's clock is ahead: a deadline reached at once. */
+    @Volatile private var ahead = 0L
     private val relay = FakeRelay()
     private val chain = Chain()
     private val sessions = mutableListOf<PoolSession>()
 
     @BeforeTest fun quick() { Protocol.NETWORK = "blake2b-test"; PoolSession.handInDelaySeconds = { 0L } }
-    @AfterTest fun down() { sessions.forEach { it.dispose() }; Protocol.NETWORK = "blake2b" }
+    @AfterTest fun down() {
+        sessions.forEach { it.dispose() }; Protocol.NETWORK = "blake2b"
+        PoolSession.SEAT_CHECK_SECONDS = 120L; PoolSession.FAKE_GRACE = 600L
+    }
 
     private var n = 0
     private fun key(): ByteArray = Hashes.sha256("pool-session-test-${n++}-${System.nanoTime()}".encodeToByteArray())
@@ -132,7 +140,11 @@ class PoolSessionTest {
 
     private suspend fun waitFor(what: String, sec: Int = 60, cond: () -> Boolean) {
         val until = System.currentTimeMillis() + sec * 1000L
-        while (!cond()) { if (System.currentTimeMillis() > until) error("timed out: $what"); delay(50) }
+        while (!cond()) {
+            if (System.currentTimeMillis() > until)
+                error("timed out: $what; " + sessions.joinToString { "${it.state.phase} ${it.state.reason} seats=${it.state.seats.size} round=${it.state.round.size}/${it.state.roundId}" })
+            delay(50)
+        }
     }
 
     private fun session(name: String, st: PoolSession.State) = PoolSession(Env(name, chain), st, relay).also { sessions += it; it.start() }
@@ -141,7 +153,7 @@ class PoolSessionTest {
 
     /** A full round: [creatorCoins]/[joinerCoins] values, [outputs] each, [payments] for v5. */
     private fun round(amount: Long, outputs: Int, creatorCoins: List<Long>, joinerCoins: List<List<Long>>, payments: List<Long> = emptyList(),
-                      maxInputs: Int = 1) = runBlocking {
+                      maxInputs: Int = 1, restartAfterReorg: Boolean = false) = runBlocking {
         val np = PoolSession.newPool(amount, 2.0, 5, 1, maxInputs = maxInputs, outputs = outputs, payments = payments)
         val t = np.terms
         val cc = creatorCoins.map { coin(it) }
@@ -179,10 +191,43 @@ class PoolSessionTest {
         for (p in payments) assertTrue(tx.outputs.any { it.value == p })
         chain.mined.add(TxParse.txid(tx))
         waitFor("confirmed", 40) { all.all { it.s.state.phase == PoolSession.Phase.CONFIRMED } }
+        if (restartAfterReorg) {
+            val stored = a.s.state.toJson()
+            sessions.toList().forEach { it.dispose() }
+            chain.mined.clear()
+            chain.txs.clear()
+            plan.coins.forEach { chain.utxos[it.outpoint] = it.value }
+            val restored = PoolSession.State.parse(stored)
+            restored.restoreSignedReservation()
+            assertEquals(PoolSession.Phase.BROADCAST, restored.phase)
+            val live = session("restored signer", restored)
+            waitFor("original transaction rebroadcast after restart", 40) { chain.txs.isNotEmpty() }
+            assertEquals(raw, chain.txs.single())
+            assertEquals(PoolSession.Phase.BROADCAST, restored.phase)
+            chain.mined.add(TxParse.txid(tx))
+            waitFor("restored round confirmed", 40) { restored.phase == PoolSession.Phase.CONFIRMED }
+            ahead += 120
+            chain.mined.clear(); chain.txs.clear()
+            plan.coins.forEach { chain.utxos[it.outpoint] = it.value }
+            live.refreshConfirmed()
+            waitFor("foreground reorg rebroadcast", 30) { chain.txs.isNotEmpty() }
+            assertEquals(raw, chain.txs.single())
+            assertEquals(PoolSession.Phase.BROADCAST, restored.phase)
+            chain.mined.add(TxParse.txid(tx))
+            waitFor("confirmed before conflict", 40) { restored.phase == PoolSession.Phase.CONFIRMED }
+            ahead += 120
+            chain.mined.clear(); chain.txs.clear()
+            chain.confirmedConflict = "aa".repeat(32)
+            live.refreshConfirmed()
+            waitFor("confirmed conflicting spend", 30) { restored.phase == PoolSession.Phase.ABORTED }
+            assertTrue(chain.txs.isEmpty())
+            assertTrue(restored.reason.contains(chain.confirmedConflict!!))
+
+        }
         tx
     }
 
-    @Test fun v3OneEqualOutputEach() { round(50_000, 1, listOf(60_000), listOf(listOf(51_000), listOf(80_000))) }
+    @Test fun v3OneEqualOutputEach() { round(50_000, 1, listOf(60_000), listOf(listOf(51_000), listOf(80_000)), restartAfterReorg = true) }
 
     @Test fun v4TwoEqualOutputsEachSeveralCoins() {
         val tx = round(20_000, 2, listOf(30_000, 15_000), listOf(listOf(41_000), listOf(25_000, 25_000)), maxInputs = 2)
@@ -212,5 +257,76 @@ class PoolSessionTest {
         val e = session("E", PoolSession.newState(np.terms, false, null, listOf(fake), listOf(k3), listOf("m"), listOf(script()), script(), password = "right"))
         waitFor("not real") { e.state.phase == PoolSession.Phase.REJECTED }
         assertEquals("that coin is not unspent on the chain", e.state.reason)
+    }
+
+    /** A, B and C in a pool, the creator first; all welcomed and seeing three seats. */
+    private suspend fun threeInAPool(): Triple<Member, Member, Member> {
+        val np = PoolSession.newPool(50_000, 2.0, 5, 1)
+        val t = np.terms
+        val (ca, ka) = coin(60_000)
+        val a = Member(session("A", PoolSession.newState(t, true, np.secret, listOf(ca), listOf(ka), listOf("m/a"), listOf(script()), script(),
+            creatorSecret = np.creatorSecret, blindPriv = np.blindPriv)), listOf(ka))
+        waitFor("A open") { a.s.state.phase == PoolSession.Phase.OPEN }
+        fun member(name: String): Member {
+            val (c, k) = coin(70_000)
+            return Member(session(name, PoolSession.newState(t, false, null, listOf(c), listOf(k), listOf("m"), listOf(script()), script())), listOf(k))
+        }
+        val b = member("B"); waitFor("B in") { b.s.state.phase == PoolSession.Phase.OPEN }
+        val c = member("C"); waitFor("C in") { c.s.state.phase == PoolSession.Phase.OPEN }
+        waitFor("three seats") { listOf(a, b, c).all { it.s.state.seats.size == 3 } }
+        return Triple(a, b, c)
+    }
+
+    /**
+     * A vote that ends by its deadline (C never answers) closes once: B holds the creator's round id,
+     * gets its blind signature, and the round of A and B is signed and broadcast. Android before 1.3.9
+     * could close such a vote again with a new round id, and the round timed out.
+     */
+    @Test fun aVoteOverByItsDeadlineClosesOnce() = runBlocking {
+        val (a, b, c) = threeInAPool()
+        b.s.requestClose()
+        waitFor("voting") { listOf(a, b, c).all { it.s.state.phase == PoolSession.Phase.VOTING } }
+        a.s.vote(true)
+        waitFor("A and B said yes") { a.s.state.accepts.size == 2 }
+        ahead = Protocol.VOTE_SECONDS + 5
+        // A fast round goes through CLOSING to SIGNING between two looks: either is past the vote.
+        val closed = setOf(PoolSession.Phase.CLOSING, PoolSession.Phase.SIGNING)
+        waitFor("closing", 60) { a.s.state.phase in closed && b.s.state.phase in closed }
+        assertEquals(a.s.state.roundId, b.s.state.roundId)
+        assertEquals(2, a.s.state.round.size)
+        waitFor("signing", 60) { listOf(a, b).all { it.s.state.phase == PoolSession.Phase.SIGNING } }
+        listOf(a, b).forEach { it.s.sign(it.keys) }
+        waitFor("broadcast") { listOf(a, b).all { it.s.state.txid != null } }
+        waitFor("C out") { c.s.state.phase == PoolSession.Phase.ABORTED }
+        assertEquals(1, chain.txs.size)
+    }
+
+    /** A member asleep at closing never asks for its blind signature: the round closes again without it. */
+    @Test fun aSeatAsleepAtClosingIsLeftOut() = runBlocking {
+        val (a, b, c) = threeInAPool()
+        b.s.requestClose()
+        waitFor("voting") { listOf(a, b, c).all { it.s.state.phase == PoolSession.Phase.VOTING } }
+        // C says yes and falls asleep before the round closes: nothing more comes from it.
+        c.s.vote(true)
+        delay(300)
+        c.s.stop()
+        a.s.vote(true)
+        waitFor("closing") { listOf(a, b).all { it.s.state.phase == PoolSession.Phase.CLOSING } }
+        waitFor("B has its signature") { b.s.state.outSigs.isNotEmpty() }
+        ahead = Protocol.OUTPUTS_SECONDS + 20
+        waitFor("closed again", 60) { b.s.state.closeSeq == 1 && a.s.state.round.size == 2 }
+        waitFor("signing", 60) { listOf(a, b).all { it.s.state.phase == PoolSession.Phase.SIGNING } }
+        listOf(a, b).forEach { it.s.sign(it.keys) }
+        waitFor("broadcast") { listOf(a, b).all { it.s.state.txid != null } }
+    }
+
+    /** A seat whose coin is spent after it joined is taken out by the creator; nobody else leaves. */
+    @Test fun aSpentSeatIsTakenOut() = runBlocking {
+        PoolSession.SEAT_CHECK_SECONDS = 1L
+        val (a, b, c) = threeInAPool()
+        chain.utxos.remove(c.s.state.seat.coin.outpoint)
+        waitFor("C out of the roster", 60) { a.s.state.seats.size == 2 && b.s.state.seats.size == 2 }
+        waitFor("C told") { c.s.state.phase == PoolSession.Phase.ABORTED }
+        assertEquals(PoolSession.Phase.OPEN, b.s.state.phase)
     }
 }

@@ -37,6 +37,42 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.coroutines.resume
 
+internal fun findBuriedConflict(
+    coins: List<PoolTx.Coin>, expectedTxid: String, isUnspent: (PoolTx.Coin, String) -> Boolean,
+    history: (String) -> List<ElectrumClient.HistoryItem>, transaction: (String) -> String, height: () -> Int
+): String? {
+    for (coin in coins) {
+        val sh = Address.electrumScriptHash(coin.script)
+        fun unspent() = isUnspent(coin, sh)
+        if (unspent()) continue
+        val first = history(sh)
+        if (first.any { it.txid == expectedTxid }) continue
+        val tip = height()
+        for (entry in first) {
+            if (entry.txid == expectedTxid || entry.txid == coin.txid ||
+                entry.height !in 1..(tip - PoolSession.REQUIRED_CONFIRMATIONS + 1)) continue
+            val raw = transaction(entry.txid)
+            if (!matchesConflict(raw, entry.txid, coin, expectedTxid)) continue
+            // Re-read after fetching the bytes. A disappeared, moved or shallow
+            // history entry or a restored output invalidates the observation.
+            val latest = history(sh)
+            if (entry in latest && latest.none { it.txid == expectedTxid } && !unspent() &&
+                height() - entry.height + 1 >= PoolSession.REQUIRED_CONFIRMATIONS)
+                return entry.txid
+        }
+    }
+    return null
+}
+
+internal fun matchesConflict(raw: String, listedId: String, coin: PoolTx.Coin, expectedId: String): Boolean {
+    if (listedId == expectedId || listedId == coin.txid) return false
+    return runCatching {
+        val tx = com.kilombino.kilowallet.core.crypto.TxParse.parse(raw)
+        com.kilombino.kilowallet.core.crypto.TxParse.txid(tx) == listedId &&
+            tx.inputs.any { it.txid == coin.txid && it.vout == coin.vout }
+    }.getOrDefault(false)
+}
+
 /** Where a seat's equal outputs go: this wallet's fresh addresses, a watch-only key's, or (a payment) the recipients'. */
 enum class PoolDest { HOT, WATCH, PAY }
 
@@ -92,7 +128,8 @@ class PoolsModel(
     private fun kSessions(zpub: String) = "kilojoin.sessions.${walletKey(zpub)}"
     private fun kWatch(zpub: String) = "kilojoin.watch.${walletKey(zpub)}"
     private fun kPooled(zpub: String) = "kilojoin.pooled.${walletKey(zpub)}"
-    private fun kDest(poolId: String) = "kilojoin.dest.$poolId"
+    /** Where a seat's outputs go, under its key ([PoolSession.State.key]: the pool's id for its first seat). */
+    private fun kDest(key: String) = "kilojoin.dest.$key"
 
     private val demo get() = platform.demoScreen != null
 
@@ -113,8 +150,9 @@ class PoolsModel(
         raw?.let { r ->
             runCatching { Json.parseToJsonElement(r).jsonArray }.getOrNull()?.forEach { e ->
                 val st = runCatching { PoolSession.State.parse(e.jsonObject) }.getOrNull() ?: return@forEach
+                st.restoreSignedReservation()
                 if (st.done && st.created < weekAgo) return@forEach
-                loaded[st.poolId] = PoolSession(env(st), st, platform.sockets)
+                loaded[st.key] = PoolSession(env(st), st, platform.sockets)
             }
         }
         sessions = loaded
@@ -135,7 +173,10 @@ class PoolsModel(
     }
 
     /** The app came back to the screen: rounds whose relay connection iOS cut reconnect on their next tick. */
-    fun resume() = startAll()
+    fun resume() {
+        startAll()
+        if (!demo) sessions.values.forEach { it.refreshConfirmed() }
+    }
 
     private fun persist() {
         val zpub = loadedFor ?: return
@@ -152,7 +193,7 @@ class PoolsModel(
         val kept = prefs.get(kPooled(zpub))?.split(',')?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
         val live = sessions.values.map { it.state }
             .filter { it.phase == PoolSession.Phase.BROADCAST || it.phase == PoolSession.Phase.CONFIRMED }
-            .filter { prefs.get(kDest(it.poolId))?.startsWith("PAY") != true }
+            .filter { prefs.get(kDest(it.key))?.startsWith("PAY") != true }
             .flatMap { st -> st.mixScripts.map { it.toHex() } }
         val all = kept + live
         if (all.size != kept.size) prefs.put(kPooled(zpub), all.joinToString(","))
@@ -161,7 +202,7 @@ class PoolsModel(
     /** Whether [u] came out of a round of this wallet, or its transaction has a round's shape (asked once). */
     fun isPooled(u: SpendableUtxo): Boolean {
         val zpub = loadedFor ?: return false
-        val script = coinScript(zpub, u).toHex()
+        val script = runCatching { coinScript(zpub, u).toHex() }.getOrNull() ?: return false
         if (prefs.get(kPooled(zpub))?.split(',')?.contains(script) == true) return true
         return prefs.get("kilojoin.tx.${u.txid}:${u.vout}") == "1"
     }
@@ -189,6 +230,11 @@ class PoolsModel(
         override fun coinUnspent(coin: PoolTx.Coin): Boolean = electrum { c ->
             c.listUnspent(Address.electrumScriptHash(coin.script)).any { it.txid == coin.txid && it.vout == coin.vout && it.value == coin.value }
         }
+        override fun buriedConflict(coins: List<PoolTx.Coin>, expectedTxid: String): String? = electrum { c ->
+            findBuriedConflict(coins, expectedTxid,
+                { coin, sh -> c.listUnspent(sh).any { it.txid == coin.txid && it.vout == coin.vout } },
+                c::history, c::transaction, c::blockHeight)
+        }
         override fun broadcast(rawHex: String): String = electrum { it.broadcast(rawHex) }
         override fun confirmations(txid: String): Int? = electrum { c ->
             // Our first output's address sees the transaction (the recipient's, for a payment's creator).
@@ -198,14 +244,17 @@ class PoolsModel(
         override fun save(state: PoolSession.State) {
             // Left on purpose: nothing to keep, and the pool shows in the open list again.
             if (state.phase == PoolSession.Phase.ABORTED && state.reason == PoolSession.LEFT_BY_CHOICE) {
-                val gone = sessions[state.poolId]
+                val gone = sessions[state.key]
                 if (gone != null) {
-                    sessions = sessions - state.poolId
+                    sessions = sessions - state.key
                     scope.launch { runCatching { gone.dispose() } }
                 }
             }
             persist()
         }
+        // This phone's seats in the pool are one person: read from the map, never through a session's lock.
+        override fun ownSeats(poolId: String): Set<String> =
+            sessions.values.map { it.state }.filter { it.poolId == poolId }.mapNotNull { it.token?.let { t -> Protocol.tokenHash(t) } }.toSet()
         override fun event(e: PoolSession.Event) {
             scope.launch {
                 publish()
@@ -222,7 +271,7 @@ class PoolsModel(
         if (on) refreshPools()
     }
 
-    /** Open pools on the relay right now: this chain's, native SegWit, not test pools, not expired, newest first. */
+    /** Open pools on the relay right now: this chain's, of a type this wallet holds, not test pools, not expired, newest first. */
     fun refreshPools() {
         if (demo || _state.value.loading) return
         _state.update { it.copy(loading = true) }
@@ -235,7 +284,13 @@ class PoolsModel(
         }
     }
 
-    private suspend fun fetchPools(sinceSeconds: Long = 3 * 86400): List<Protocol.Terms> {
+    // Only the pools heard from lately: an open pool is re-announced every 10 minutes and listed for 35, so
+    // twice that is every pool there is. Three days' worth (hundreds of announcements, each signature
+    // checked here) only made the list slow.
+    /** Screenshot runs: the open pools the relay lists now (how many). */
+    suspend fun countPoolsNow(): String = fetchPools().size.toString() + " pool(s)"
+
+    private suspend fun fetchPools(sinceSeconds: Long = 2 * Protocol.STALE_AFTER): List<Protocol.Terms> {
         val found = HashMap<String, Protocol.Terms>()
         val lock = kotlinx.coroutines.sync.Mutex()
         val r = RelayClient(Protocol.RELAY, platform.sockets, { _, ev ->
@@ -252,24 +307,25 @@ class PoolsModel(
             r.subscribe("pools", listOf(com.kilombino.kilowallet.core.kilojoin.poolsFilter(NostrEvent.nowSeconds() - sinceSeconds)))
         } finally { r.close() }
         val now = NostrEvent.nowSeconds()
+        val taproot = wallet().taprootXpub != null
         lock.lock()
         val all = try { found.values.toList() } finally { lock.unlock() }
         return all.filter {
             it.state == "open" && it.expiresAt > now && it.peers < it.maxPeers && now - it.createdAt < Protocol.STALE_AFTER &&
-                it.script == PoolType.P2WPKH && !Protocol.isTest(it)
+                (it.script == PoolType.P2WPKH || (it.script == PoolType.P2TR && taproot)) && !Protocol.isTest(it)
         }.sortedByDescending { it.createdAt }
     }
 
     // ------------------------------------------------------------------ coins and addresses
 
     /** Outpoints of rounds being built (outputs handed in, signatures asked): a normal send must leave them alone. */
-    fun lockedOutpoints(): Set<String> = sessions.values.filter { !it.done && it.state.phase in setOf(PoolSession.Phase.CLOSING, PoolSession.Phase.SIGNING) }
+    fun lockedOutpoints(): Set<String> = sessions.values.filter { !it.done && it.state.phase in setOf(PoolSession.Phase.CLOSING, PoolSession.Phase.SIGNING, PoolSession.Phase.BROADCAST) }
         .flatMap { s -> s.state.seat.coins.map { it.outpoint } }.toSet()
 
-    /** Coins seated in a pool that has not started its round, outpoint → pool: spendable, at the cost of the seat. */
+    /** Coins seated in a pool that has not started its round, outpoint → seat key: spendable, at the cost of the seat. */
     fun waitingOutpoints(): Map<String, String> = sessions.values
         .filter { !it.done && it.state.phase in setOf(PoolSession.Phase.JOINING, PoolSession.Phase.OPEN, PoolSession.Phase.VOTING) }
-        .flatMap { s -> s.state.seat.coins.map { it.outpoint to s.state.poolId } }.toMap()
+        .flatMap { s -> s.state.seat.coins.map { it.outpoint to s.state.key } }.toMap()
 
     /** A normal send spent these coins: give up their seats (the others are told). */
     fun leaveFor(outpoints: Collection<String>) {
@@ -284,32 +340,44 @@ class PoolsModel(
         !(ended && !st.postedOutput)
     }.flatMap { st -> st.mixScripts + listOfNotNull(st.seat.changeScript) }.map { it.toList() }.toSet()
 
-    private fun coinScript(zpub: String, u: SpendableUtxo): ByteArray =
-        Address.scriptPubKey(Bip32.derivePath(Bip32.parseExtendedPubKey(zpub), u.chainIndex, u.index).pubkey(), ScriptType.P2WPKH)
+    /** The pool type of a coin of this wallet: its Taproot account's, or native SegWit. */
+    private fun typeOf(u: SpendableUtxo): PoolType = if (u.type == ScriptType.P2TR) PoolType.P2TR else PoolType.P2WPKH
 
-    /** Confirmed native SegWit coins not seated in another round, biggest first. */
-    suspend fun poolCoins(): List<SpendableUtxo> {
+    /** This wallet's account for pools of [type]: the zpub, or the Taproot account's key. */
+    private fun account(zpub: String, type: PoolType) =
+        if (type == PoolType.P2TR) Bip32.parseExtendedPubKey(wallet().taprootXpub ?: error("Taproot is not turned on in this wallet."))
+        else Bip32.parseExtendedPubKey(zpub)
+
+    private fun coinScript(zpub: String, u: SpendableUtxo): ByteArray =
+        Address.scriptPubKey(Bip32.derivePath(account(zpub, typeOf(u)), u.chainIndex, u.index).pubkey(), PoolTx.scriptType(typeOf(u)))
+
+    /** Confirmed coins not seated in another round, biggest first: of [type] only, or all with null. */
+    suspend fun poolCoins(type: PoolType? = null): List<SpendableUtxo> {
         val seated = waitingOutpoints().keys + lockedOutpoints()
-        val coins = gatherCoins().filter { it.height > 0 && "${it.txid}:${it.vout}" !in seated }.sortedByDescending { it.value }
+        val coins = gatherCoins().filter { it.height > 0 && "${it.txid}:${it.vout}" !in seated && (type == null || typeOf(it) == type) }
+            .sortedByDescending { it.value }
         runCatching { learnPooled(coins) }
         return coins
     }
 
-    /** Reserve outputs in the publisher address book before a pool can announce them. */
-    private fun freshReceive(zpub: String, n: Int): List<ByteArray> =
-        List(n) { reserveAddress(zpub, 0) }
+    /** Reserve each address durably before a round can announce it. */
+    private fun freshReceive(zpub: String, n: Int, type: PoolType = PoolType.P2WPKH): List<ByteArray> =
+        List(n) { reserveAddress(zpub, 0, type) }
 
-    private fun freshChange(zpub: String): ByteArray = reserveAddress(zpub, 1)
+    private fun freshChange(zpub: String, type: PoolType = PoolType.P2WPKH): ByteArray =
+        reserveAddress(zpub, 1, type)
 
-    private fun reserveAddress(zpub: String, chain: Int): ByteArray {
-        addresses.observe(zpub, wallet().rows)
-        val acct = Bip32.parseExtendedPubKey(zpub)
+    private fun reserveAddress(zpub: String, chain: Int, type: PoolType): ByteArray {
+        val key = if (type == PoolType.P2TR) wallet().taprootXpub ?: error("Taproot is not enabled.") else zpub
+        val rows = wallet().rows.filter { (it.type == ScriptType.P2TR) == (type == PoolType.P2TR) }
+        addresses.observe(key, rows)
+        val acct = account(zpub, type)
         val held = reservedScripts()
         while (true) {
-            val i = addresses.next(zpub, chain)
-            addresses.checkAvailable(zpub, chain, i)
-            val sp = Address.scriptPubKey(Bip32.derivePath(acct, chain, i).pubkey(), ScriptType.P2WPKH)
-            addresses.reserve(zpub, chain, i)
+            val i = addresses.next(key, chain)
+            addresses.checkAvailable(key, chain, i)
+            val sp = Address.scriptPubKey(Bip32.derivePath(acct, chain, i).pubkey(), PoolTx.scriptType(type))
+            addresses.reserve(key, chain, i)
             if (sp.toList() !in held) return sp
         }
     }
@@ -340,7 +408,7 @@ class PoolsModel(
     }
 
     /** Where [poolId]'s equal outputs go, as noted on this phone when it began. */
-    fun destOf(poolId: String): PoolDest = prefs.get(kDest(poolId))?.substringBefore('|')?.let { n -> PoolDest.entries.firstOrNull { it.name == n } } ?: PoolDest.HOT
+    fun destOf(key: String): PoolDest = prefs.get(kDest(key))?.substringBefore('|')?.let { n -> PoolDest.entries.firstOrNull { it.name == n } } ?: PoolDest.HOT
 
     /** The addresses of [st]'s own outputs, for its card. */
     fun outputAddresses(st: PoolSession.State): List<String> = st.mixScripts.map { Address.fromScriptPubKey(it) ?: it.toHex() }
@@ -367,15 +435,23 @@ class PoolsModel(
         } finally { master.wipe() }
     }
 
-    private fun pathOf(u: SpendableUtxo) = "m/84'/0'/0'/${u.chainIndex}/${u.index}"
+    private fun pathOf(u: SpendableUtxo) = (if (typeOf(u) == PoolType.P2TR) "m/86'" else "m/84'") + "/0'/0'/${u.chainIndex}/${u.index}"
 
+    /** For Taproot the coin's key is its BIP-86 internal key; the pool sees the tweaked one in its script. */
     private fun poolCoin(zpub: String, u: SpendableUtxo): PoolTx.Coin =
-        PoolTx.Coin(u.txid, u.vout, u.value, Bip32.derivePath(Bip32.parseExtendedPubKey(zpub), u.chainIndex, u.index).pubkey())
+        PoolTx.Coin(u.txid, u.vout, u.value, Bip32.derivePath(account(zpub, typeOf(u)), u.chainIndex, u.index).pubkey(), typeOf(u))
+
+    /** The one pool type of [coins] (a round never mixes types: it would point at their owner). */
+    private fun typeOfAll(coins: List<SpendableUtxo>): PoolType {
+        val types = coins.map(::typeOf).toSet()
+        require(types.size == 1) { "all the coins of a seat must be of one address type" }
+        return types.first()
+    }
 
     private fun add(st: PoolSession.State, dest: PoolDest, note: String = "") {
         val s = PoolSession(env(st), st, platform.sockets)
-        sessions = sessions + (st.poolId to s)
-        prefs.put(kDest(st.poolId), dest.name + "|" + note)
+        sessions = sessions + (st.key to s)
+        prefs.put(kDest(st.key), dest.name + "|" + note)
         persist(); publish()
         if (!demo) s.start()
     }
@@ -400,14 +476,22 @@ class PoolsModel(
     fun join(t: Protocol.Terms, coins: List<SpendableUtxo>, dest: PoolDest, password: String?, done: (Boolean) -> Unit) {
         val zpub = wallet().zpub ?: return
         run(I18n.tr("Proving you own the coins and asking to join…"), I18n.tr("Unlock to join the pool with your coins"), done) { words ->
-            require(t.script == PoolType.P2WPKH) { "This app joins native SegWit (bc1q) pools only." }
+            require(typeOfAll(coins) == t.script) { "these coins are not of the pool's address type" }
+            require(dest != PoolDest.WATCH || t.script == PoolType.P2WPKH) { "A Taproot pool's outputs go to this wallet: the watch-only key is native SegWit." }
+            val seated = sessions.values.filter { !it.done }.flatMap { s -> s.state.seat.coins.map { it.outpoint } }.toSet()
+            require(coins.none { "${it.txid}:${it.vout}" in seated }) { "that coin already has a seat" }
             checkPolicy(coins.map { "${it.txid}:${it.vout}" })
             verifyCoins(coins)
-            val mix = withContext(ioDispatcher) { if (dest == PoolDest.WATCH) watchScripts(t.outputs) else freshReceive(zpub, t.outputs) }
+            val mix = withContext(ioDispatcher) { if (dest == PoolDest.WATCH) watchScripts(t.outputs) else freshReceive(zpub, t.outputs, t.script) }
             val pcs = coins.map { poolCoin(zpub, it) }
             val keys = withContext(Dispatchers.Default) { keysFor(words, zpub, coins.map(::pathOf), pcs.map { it.pubkey }) }
+            // A pool this phone already has a seat in gets another one: one more member, with its own join key
+            // and connection, joining after a random wait so the two don't show up together (Android 1.3.3).
+            val seatId = newSeatId(t.id)
+            val wait = if (seatId.isEmpty()) 0L else NostrEvent.nowSeconds() + extraSeatDelay()
             val st = withContext(Dispatchers.Default) {
-                PoolSession.newState(t, false, null, pcs, keys, coins.map(::pathOf), mix, freshChange(zpub), password?.ifEmpty { null })
+                PoolSession.newState(t, false, null, pcs, keys, coins.map(::pathOf), mix, freshChange(zpub, t.script), password?.ifEmpty { null },
+                    seatId = seatId, joinAfter = wait)
             }
             keys.forEach { it.fill(0) }
             add(st, dest, if (dest == PoolDest.WATCH) (_state.value.watchKey?.take(12) ?: "") else "")
@@ -423,21 +507,24 @@ class PoolsModel(
         val zpub = wallet().zpub ?: return
         run(I18n.tr("Making the pool's keys and announcing it…"), I18n.tr("Unlock to put your coins in the pool"), done) { words ->
             checkPolicy(coins.map { "${it.txid}:${it.vout}" })
+            val type = typeOfAll(coins)
+            require(dest != PoolDest.WATCH || type == PoolType.P2WPKH) { "A Taproot pool's outputs go to this wallet: the watch-only key is native SegWit." }
             verifyCoins(coins)
-            val check = pay?.let { PoolPayment.check(it.recipients) }
+            val check = pay?.let { PoolPayment.check(it.recipients, taprootOk = wallet().taprootXpub != null) }
             require(check == null || check.any) { check?.reason ?: "" }
+            require(check == null || check.type == type) { "The coins and the recipients' addresses must be of the same type." }
             val payments = if (check != null && !check.ok) check.amounts else emptyList()
             val mix = when {
                 check != null -> check.scripts
                 dest == PoolDest.WATCH -> withContext(ioDispatcher) { watchScripts(outputs) }
-                else -> freshReceive(zpub, outputs)
+                else -> freshReceive(zpub, outputs, type)
             }
             val pcs = coins.map { poolCoin(zpub, it) }
             val keys = withContext(Dispatchers.Default) { keysFor(words, zpub, coins.map(::pathOf), pcs.map { it.pubkey }) }
             val st = withContext(Dispatchers.Default) {
-                val np = PoolSession.newPool(amount, rate, maxPeers, hours, minPeers, !password.isNullOrEmpty(), PoolType.P2WPKH,
+                val np = PoolSession.newPool(amount, rate, maxPeers, hours, minPeers, !password.isNullOrEmpty(), type,
                     maxInputs, v3 = true, outputs = outputs, payments = payments)
-                PoolSession.newState(np.terms, true, np.secret, pcs, keys, coins.map(::pathOf), mix, freshChange(zpub),
+                PoolSession.newState(np.terms, true, np.secret, pcs, keys, coins.map(::pathOf), mix, freshChange(zpub, type),
                     password?.ifEmpty { null }, np.creatorSecret, np.blindPriv)
             }
             keys.forEach { it.fill(0) }
@@ -450,11 +537,35 @@ class PoolsModel(
         }
     }
 
-    fun session(poolId: String): PoolSession? = sessions[poolId]
+    /** A round by its seat's key ([PoolSession.State.key]). */
+    fun session(key: String): PoolSession? = sessions[key]
+
+    /** The people in [st]'s pool as this phone sees them: its own seats count as one. */
+    fun people(st: PoolSession.State): Int {
+        val list = if (st.round.isNotEmpty() && st.phase !in setOf(PoolSession.Phase.OPEN, PoolSession.Phase.VOTING)) st.round else st.seats
+        val own = sessions.values.map { it.state }.filter { it.poolId == st.poolId }.mapNotNull { it.token?.let { t -> Protocol.tokenHash(t) } }.toSet()
+        return PoolSession.distinctPeople(list.map { it.tokenHash }, own)
+    }
+
+    /** Pools a live seat of this phone is in. */
+    fun busyPools(): Set<String> = sessions.values.filter { !it.done }.map { it.state.poolId }.toSet()
+
+    /** The seat id of a new seat in [poolId]: "" while this phone has no live seat in it, a fresh random one otherwise. */
+    private fun newSeatId(poolId: String): String {
+        val taken = sessions.filter { !it.value.done }.keys
+        if (poolId !in taken) return ""
+        while (true) {
+            val id = com.kilombino.kilowallet.core.platform.secureRandomBytes(4).toHex()
+            if (PoolSession.State.keyOf(poolId, id) !in taken) return id
+        }
+    }
+
+    /** The random wait before another seat joins a pool this phone is already in: 20 to 90 seconds. */
+    private fun extraSeatDelay(): Long = 20L + (com.kilombino.kilowallet.core.platform.secureRandomBytes(1)[0].toInt() and 0xFF) % 71
 
     /** The user looked at what was checked and signs: one unlock for the keys of our coins in the round. */
-    fun sign(poolId: String) {
-        val s = sessions[poolId] ?: return
+    fun sign(key: String) {
+        val s = sessions[key] ?: return
         val zpub = wallet().zpub ?: return
         run(I18n.tr("Signing your inputs…"), I18n.tr("Unlock to sign your coins in the round")) { words ->
             val st = s.state
@@ -466,8 +577,8 @@ class PoolsModel(
         }
     }
 
-    private fun act(poolId: String, f: suspend (PoolSession) -> Unit) {
-        val s = sessions[poolId] ?: return
+    private fun act(key: String, f: suspend (PoolSession) -> Unit) {
+        val s = sessions[key] ?: return
         scope.launch {
             val r = runCatching { withContext(ioDispatcher) { f(s) } }
             r.exceptionOrNull()?.let { e -> _state.update { it.copy(message = e.message ?: "failed") } }
@@ -475,23 +586,23 @@ class PoolsModel(
         }
     }
 
-    fun requestClose(poolId: String) = act(poolId) { it.requestClose() }
-    fun vote(poolId: String, yes: Boolean) = act(poolId) { it.vote(yes) }
-    fun leave(poolId: String) = act(poolId) { it.leave() }
+    fun requestClose(key: String) = act(key) { it.requestClose() }
+    fun vote(key: String, yes: Boolean) = act(key) { it.vote(yes) }
+    fun leave(key: String) = act(key) { it.leave() }
 
     /** Forget a finished round. */
-    fun remove(poolId: String) {
-        val phase = sessions[poolId]?.state?.phase ?: return
+    fun remove(key: String) {
+        val phase = sessions[key]?.state?.phase ?: return
         if (phase != PoolSession.Phase.ABORTED && phase != PoolSession.Phase.CONFIRMED) {
             _state.update { it.copy(message = "Finish or leave this round before removing it.") }
             return
         }
-        sessions[poolId]?.dispose()
-        sessions = sessions - poolId
+        sessions[key]?.dispose()
+        sessions = sessions - key
         persist(); publish()
     }
 
-    fun removeFinished() = _state.value.rounds.filter { it.phase == PoolSession.Phase.ABORTED || it.phase == PoolSession.Phase.CONFIRMED }.forEach { remove(it.poolId) }
+    fun removeFinished() = _state.value.rounds.filter { it.phase == PoolSession.Phase.ABORTED || it.phase == PoolSession.Phase.CONFIRMED }.forEach { remove(it.key) }
 
     fun dismissMessage() = _state.update { it.copy(message = null) }
 
@@ -507,7 +618,7 @@ class PoolsModel(
         _state.update { it.copy(enabled = true) }
         val now = NostrEvent.nowSeconds()
         // One pool's keys for all of them (made-up pools: only their terms are shown).
-        val base = PoolSession.newPool(50_000, 2.0, 5, 6, now = now - 1800)
+        val base = ScreenshotPoolFixture.create(now - 1800)
         fun terms(amount: Long, outputs: Int, peers: Int, rate: Double, payments: List<Long> = emptyList(), private: Boolean = false) =
             base.terms.copy(id = Hashes.sha256("demo$amount$outputs".encodeToByteArray()).toHex().take(16), amount = amount, outputs = outputs,
                 peers = peers, feeRate = rate, payments = payments, private = private, createdAt = now - 600,
@@ -515,7 +626,7 @@ class PoolsModel(
         val open = listOf(terms(100_000, 1, 2, 2.0), terms(50_000, 2, 3, 1.0), terms(25_000, 2, 1, 3.0, listOf(20_000, 30_000)),
             terms(1_000_000, 1, 1, 1.0, private = true))
         _state.update { it.copy(open = open) }
-        if (screen == "pool-round" || screen == "pools") {
+        if (screen == "pool-round" || screen == "pools" || screen == "pool-history") {
             val seed = Bip39.toSeed(words, "")
             val master = Bip32Priv.fromSeed(seed)
             fun k(c: Int, i: Int) = Bip32Priv.derivePath(master, "m/84'/0'/0'/$c/$i").keyBytes()
@@ -538,6 +649,10 @@ class PoolsModel(
                 st.outputs.add(Address.scriptPubKey(com.kilombino.kilowallet.core.crypto.Ec.publicKey(Hashes.sha256("demo-o1".encodeToByteArray())), ScriptType.P2WPKH).toHex())
                 st.outputs.add(Address.scriptPubKey(com.kilombino.kilowallet.core.crypto.Ec.publicKey(Hashes.sha256("demo-o2".encodeToByteArray())), ScriptType.P2WPKH).toHex())
                 st.phase = PoolSession.Phase.SIGNING; st.phaseDeadline = now + 17 * 60
+            } else if (screen == "pool-history") {
+                // A round that went out and confirmed, as HISTORY shows it.
+                st.phase = PoolSession.Phase.CONFIRMED; st.txid = "ab".repeat(32)
+                st.sentAt = now - 5400; st.endedAt = now - 4800
             } else st.phase = PoolSession.Phase.OPEN
             master.wipe()
             sessions = mapOf(st.poolId to PoolSession(env(st), st, platform.sockets))

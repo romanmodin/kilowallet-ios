@@ -1,0 +1,92 @@
+name: iOS release archive
+
+# An unsigned Release archive of a tag, attached to its GitHub release. Whoever submits the app
+# signs it with their own Apple account: this only saves building the Kotlin framework on a Mac.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build (e.g. v0.4.0)
+        required: true
+
+permissions:
+  contents: write
+  # The engines' artifacts of their own workflow runs (the fetch scripts' fallback).
+  actions: read
+
+jobs:
+  archive:
+    name: Unsigned archive for device
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Cache Kotlin/Native
+        uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+      - name: Select Xcode 26 or newer (Apple's upload minimum since 28 April 2026)
+        run: |
+          X=$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | grep -v -i beta | sort -V | tail -1)
+          test -n "$X" || { echo "No Xcode 26+ on this runner"; ls -d /Applications/Xcode*; exit 1; }
+          sudo xcode-select -s "$X/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          SDK=$(xcrun --sdk iphoneos --show-sdk-version); test "${SDK%%.*}" -ge 26
+          echo "Commit: $(git rev-parse HEAD) ($TAG)"
+      - name: Fetch the Lightning engine (Lndmobile.xcframework, checked against lnd-engine/ENGINE)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/fetch-lnd-engine.sh
+
+      - name: Fetch the Ark engine (KilombinoArk.xcframework, checked against ark-engine/ENGINE)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/fetch-ark-engine.sh
+
+      - name: Fetch the Tor engine (KilombinoTor.xcframework, checked against tor-engine/ENGINE)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/fetch-tor-engine.sh
+
+      - name: Archive Release for iphoneos without signing
+        run: |
+          set -o pipefail
+          mkdir -p build out
+          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/dd \
+            -archivePath build/Kilowallet.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive \
+            | tee build/xcodebuild-archive.log | grep -E "error:|ARCHIVE|^\*\*"
+          test -d build/Kilowallet.xcarchive/Products/Applications/Kilowallet.app
+          # The SDK and Xcode the app was built with, as App Store Connect reads them.
+          /usr/libexec/PlistBuddy -c "Print :DTSDKName" -c "Print :DTXcode" -c "Print :DTXcodeBuild" \
+            build/Kilowallet.xcarchive/Products/Applications/Kilowallet.app/Info.plist
+          V="${TAG#v}"
+          (cd build && ditto -c -k --keepParent Kilowallet.xcarchive "../out/Kilowallet-$V-unsigned.xcarchive.zip")
+          mkdir -p build/ipa/Payload
+          cp -R build/Kilowallet.xcarchive/Products/Applications/Kilowallet.app build/ipa/Payload/
+          (cd build/ipa && zip -qry "../../out/Kilowallet-$V-unsigned.ipa" Payload)
+          # Its own sums file: the release may already carry the engines' SHA256SUMS.
+          (cd out && shasum -a 256 * > "Kilowallet-$V-SHA256SUMS" && cat "Kilowallet-$V-SHA256SUMS")
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" out/* --clobber --repo "$GITHUB_REPOSITORY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: archive-log
+          path: build/xcodebuild-archive.log

@@ -1,6 +1,6 @@
 # Kilowallet privacy information
 
-Draft for this iOS distribution, 2026-10-11. Original creator: **Kilombino**. Distribution maintained by romanmodin.
+Kilowallet 1.0 iPhone release candidate, November 4, 2026. Original creator: **Kilombino**. Distribution maintained by romanmodin.
 
 ## Data on your iPhone
 
@@ -10,7 +10,7 @@ Recovery words are brought into memory when you choose to reveal them, sign, or 
 
 ## Electrum servers and public transactions
 
-The app connects to your selected Electrum server over TLS. The bundled default is `fulcrum.kilombino.com:17717`. That server receives your network address, queried address script hashes and wallet-history requests, and any transaction you submit. These queries can be linked to your wallet. The server is operated separately from this distribution; its logging and retention have not been verified here. You can choose your own compatible server in Settings.
+The app connects to your selected Electrum server over TLS. The bundled default is `fulcrum.kilombino.com:17717`. On a direct connection that server receives your network address. It receives queried address script hashes and wallet-history requests, and any transaction you submit. These queries can be linked to your wallet. The server is operated separately from this distribution; the default operator reports no IP or query logs, except that failed requests may log a script hash without an IP until daily deletion. Other servers set their own policies. You can choose your own compatible server in Settings.
 
 Transactions broadcast to the network can become public blockchain records. Removing a wallet from the app does not erase blockchain records or data previously received by a server.
 
@@ -41,3 +41,17 @@ Receive's share action presents the system share sheet with a public address/pay
 its QR image, including an amount when requested. You choose the destination; it may retain
 the shared data. This action does not include wallet names, history, account keys or recovery
 secrets. The shared text identifies XBT BLAKE2b; another wallet may ignore a URI chain label.
+
+## Optional network services in 1.0
+
+Kilojoin uses a relay to coordinate collaborative transactions. The relay operator reports no IP logs and deletes retained coordination messages after seven days. Public pool announcements are visible to other participants. With the app's Tor running, this candidate connects to the relay's onion service first and falls back to the public relay through Tor. It fails if both Tor routes fail; it does not fall back to a direct connection in that case. With Tor off, Kilojoin connects directly. Tor routing is not a guarantee of anonymity or background execution. The public relay and price endpoint use Cloudflare, which processes connection data. The price endpoint operator reports no access logs.
+
+The Lightning bridge is optional. This iPhone release candidate contacts the bridge via HTTPS through Cloudflare, even if the Lightning node uses Tor. The operator keeps IPs only in memory for rate limiting until an hour of inactivity. Quotes retain the payment hash, amount and expiry until expiry plus one minute; proof tokens last one hour and the re-quote guard about eleven minutes. The bridge's Lightning node retains its swap journal indefinitely, including payment hash, destination invoice (containing the recipient's node ID), amounts, preimage and state. An internal monitor retains hashes and states for operator alerts. There is no payer account; the operator reports it does not receive the payer's node ID.
+
+The operator's Lightning watchtower is onion-only. It stores a session public key, encrypted breach-remedy records and a short breach identifier until the client deletes the session after its channels close. The operator reports that it does not receive client IPs, invoices or payment hashes from the watchtower protocol.
+
+The default Ark server, ark.paperclippool.xyz, is operated by Paperclip Holdings LLC. Its disclosed data types include IP logs, public keys, VTXO identifiers, invoices, hashes, amounts and recovery data. Retention depends on purpose; signing and recovery records can be long-lived. See [Paperclip's privacy notice](https://pool.paperclippool.xyz/privacy) and [terms](https://pool.paperclippool.xyz/terms), or contact contact@paperclippool.xyz.
+
+## Wallet and node backups
+
+A password-protected .kab backup is distinct from a CSV export. It contains wallet recovery material and can include Ark data and a static Lightning channel backup. A separate Lightning move file can contain a live node's channel state. Anyone with the file and its password may be able to access funds. Backups saved or shared by the user are outside the app's control. Removing an on-chain wallet is not proof that all native node files, local copies or remote records were erased.

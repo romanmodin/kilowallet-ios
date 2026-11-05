@@ -10,11 +10,21 @@ struct ComposeView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 
-    /// CI screenshot mode (`-kwDemo <screen>` launch argument), Debug builds only.
+    /// CI screenshot mode (the `KW_DEMO` environment variable), Debug builds only. Not a launch
+    /// argument: LND (linked in) parses the process's arguments as its own flags and stops on any
+    /// it doesn't know.
     static func demoScreen() -> String? {
         #if DEBUG
-        let args = ProcessInfo.processInfo.arguments
-        if let i = args.firstIndex(of: "-kwDemo"), i + 1 < args.count { return args[i + 1] }
+        #if targetEnvironment(simulator)
+        // CI writes the case into this throwaway simulator's container before each launch.
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        if let name = try? String(contentsOf: docs.appendingPathComponent("kw-demo-case"), encoding: .utf8),
+           !name.isEmpty {
+            try? name.write(to: docs.appendingPathComponent("kw-demo-selected"), atomically: true, encoding: .utf8)
+            return name
+        }
+        #endif
+        if let s = ProcessInfo.processInfo.environment["KW_DEMO"], !s.isEmpty { return s }
         #endif
         return nil
     }

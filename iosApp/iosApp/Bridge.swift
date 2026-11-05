@@ -23,6 +23,7 @@ final class Bridge: NSObject, IosBridge {
         }
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            BalanceWatch.schedule()
             guard let self = self, self.backgroundTask == .invalid else { return }
             self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Kilojoin rounds") { [weak self] in
                 self?.endBackgroundTask()
@@ -66,6 +67,10 @@ final class Bridge: NSObject, IosBridge {
 
     func openConnection(host: String, port: Int32, tls: Bool, pinnedFingerprint: String?) -> IosConnection {
         ElectrumConnection(host: host, port: port, tls: tls, pinnedFingerprint: pinnedFingerprint)
+    }
+
+    func openConnectionVia(host: String, port: Int32, tls: Bool, pinnedFingerprint: String?, socksPort: Int32) -> IosConnection {
+        ElectrumConnection(host: host, port: port, tls: tls, pinnedFingerprint: pinnedFingerprint, socksPort: socksPort)
     }
 
     // MARK: QR
@@ -132,6 +137,13 @@ final class Bridge: NSObject, IosBridge {
         }
     }
 
+    func scanQrParts(listener: IosQrPartListener) {
+        DispatchQueue.main.async {
+            guard let top = Self.topViewController() else { listener.onEnd(); return }
+            QrScannerViewController.presentParts(from: top, onPart: { listener.onPart(text: $0) }, onEnd: { listener.onEnd() })
+        }
+    }
+
     // MARK: Price feed
 
     /// One HTTPS GET (the price feed): no cookies, no cache, a 10 s timeout; the body of a 200 answer or nil.
@@ -171,11 +183,211 @@ final class Bridge: NSObject, IosBridge {
         #endif
     }
 
+    // MARK: Backup file (FileBridge.swift)
+
+    func saveFile(name: String, data: Data, completion: @escaping (String?) -> Void) {
+        FileBridge.save(name: name, data: data, completion: completion)
+    }
+
+    func openFile(completion: @escaping (Data?) -> Void) {
+        FileBridge.open(completion: completion)
+    }
+
+    // MARK: Lightning (LND linked in: LndmobileEngine.swift)
+
+    func lndAvailable() -> Bool { true }
+
+    func lndStart(args: String, listener: IosLndListener) { LndmobileEngine.start(args, listener) }
+
+    func lndCall(method: String, request: Data?, listener: IosLndListener) { LndmobileEngine.call(method, request, listener) }
+
+    func lndStream(method: String, request: Data?, listener: IosLndListener) { LndmobileEngine.stream(method, request, listener) }
+
+    /// Application Support/lnd, kept out of iCloud and device backups (a restored copy of a node's
+    /// channel state would be dangerous: the channel backup and the words are the way back).
+    func lndDir() -> String {
+        let fm = FileManager.default
+        var url = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("lnd", isDirectory: true)
+        try? fm.createDirectory(at: url, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
+        return url.path
+    }
+
+    func lndPasswordLoad(owner: String) -> String? { LndPassword.load(owner) }
+
+    func lndPasswordSave(owner: String, hex: String) -> String? { LndPassword.save(owner, hex) }
+
+    func lndPasswordDelete(owner: String) { LndPassword.delete(owner) }
+
+    /// One HTTPS request (the LSP, the explorer), blocking the calling (background) thread: no
+    /// cookies, no cache, a 30 s timeout. Status 0 with the error when there was no answer.
+    func httpRequest(method: String, url: String, body: String?) -> IosHttpResult {
+        httpRequestVia(method: method, url: url, body: body, socksPort: 0)
+    }
+
+    /// The same through the app's Tor when [socksPort] > 0 (Android: the LSP and the explorer go
+    /// through Tor when it is already running).
+    func httpRequestVia(method: String, url: String, body: String?, socksPort: Int32) -> IosHttpResult {
+        guard let u = URL(string: url), u.scheme == "https" else { return HttpResult(0, "not an https URL") }
+        var req = URLRequest(url: u, timeoutInterval: 30)
+        req.httpMethod = method
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("Kilowallet", forHTTPHeaderField: "User-Agent")
+        if let body = body {
+            req.httpBody = Data(body.utf8)
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let done = DispatchSemaphore(value: 0)
+        var result = HttpResult(0, "no answer")
+        let session = socksPort > 0 ? Self.torSession(socksPort) : Self.session
+        session.dataTask(with: req) { data, response, error in
+            if let http = response as? HTTPURLResponse {
+                result = HttpResult(Int32(http.statusCode), data.flatMap { String(data: $0, encoding: .utf8) } ?? "")
+            } else {
+                result = HttpResult(0, error?.localizedDescription ?? "no answer")
+            }
+            done.signal()
+        }.resume()
+        done.wait()
+        return result
+    }
+
+    /// One ephemeral session per Tor port (the port stays the same for the app's run).
+    private static var torSessions: [Int32: URLSession] = [:]
+    private static let torLock = NSLock()
+    private static func torSession(_ port: Int32) -> URLSession {
+        torLock.lock(); defer { torLock.unlock() }
+        if let s = torSessions[port] { return s }
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForRequest = 60
+        c.timeoutIntervalForResource = 90
+        c.httpCookieStorage = nil
+        c.urlCache = nil
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        TorProxy.apply(to: c, port: port, isolation: nil)
+        let s = URLSession(configuration: c)
+        torSessions[port] = s
+        return s
+    }
+
+    private final class HttpResult: NSObject, IosHttpResult {
+        private let code: Int32; private let text: String
+        init(_ code: Int32, _ text: String) { self.code = code; self.text = text }
+        func status() -> Int32 { code }
+        func body() -> String { text }
+    }
+
+    /// While a Lightning payment is on its way, leaving the app keeps the node going for the little
+    /// time iOS allows (about 30 s); the payment is followed again when the app comes back.
+    func beginBackgroundWork(name: String) -> Int64 {
+        var id: UIBackgroundTaskIdentifier = .invalid
+        id = UIApplication.shared.beginBackgroundTask(withName: name) {
+            UIApplication.shared.endBackgroundTask(id)
+        }
+        return id == .invalid ? 0 : Int64(id.rawValue)
+    }
+
+    func endBackgroundWork(id: Int64) {
+        if id != 0 { UIApplication.shared.endBackgroundTask(UIBackgroundTaskIdentifier(rawValue: Int(id))) }
+    }
+
     // MARK: Pools (Kilojoin): the nostr relay
+
+    // MARK: Ark (ArkEngine.swift: KilombinoArk.xcframework)
+
+    func arkAvailable() -> Bool { true }
+
+    func arkStart(datadir: String, port: Int32, mnemonic: String?, passphrase: String) -> String {
+        ArkEngine.start(datadir: datadir, port: port, mnemonic: mnemonic, passphrase: passphrase)
+    }
+
+    func arkStop() { ArkEngine.stop() }
+
+    func arkDir() -> String {
+        let fm = FileManager.default
+        var url = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("ark", isDirectory: true)
+        try? fm.createDirectory(at: url, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
+        return url.path
+    }
+
+    func arkWordsLoad(owner: String) -> String? { ArkWords.load(owner) }
+    func arkWordsSave(owner: String, text: String) -> String? { ArkWords.save(owner, text) }
+    func arkWordsDelete(owner: String) { ArkWords.delete(owner) }
+
+    /// The engine on 127.0.0.1 (plain http, nothing else), or the chain source over https.
+    func arkHttp(method: String, url: String, body: String?, bearer: String?, timeoutMs: Int32) -> IosHttpResult {
+        guard let u = URL(string: url), u.scheme == "https" || (u.scheme == "http" && u.host == "127.0.0.1") else {
+            return HttpResult(0, "not an allowed URL")
+        }
+        var req = URLRequest(url: u, timeoutInterval: max(5, Double(timeoutMs) / 1000))
+        req.httpMethod = method
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("Kilowallet", forHTTPHeaderField: "User-Agent")
+        if let t = bearer { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        if let body = body {
+            req.httpBody = Data(body.utf8)
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let done = DispatchSemaphore(value: 0)
+        var result = HttpResult(0, "no answer")
+        Self.arkSession.dataTask(with: req) { data, response, error in
+            if let http = response as? HTTPURLResponse {
+                result = HttpResult(Int32(http.statusCode), data.flatMap { String(data: $0, encoding: .utf8) } ?? "")
+            } else {
+                result = HttpResult(0, error?.localizedDescription ?? "no answer")
+            }
+            done.signal()
+        }.resume()
+        done.wait()
+        return result
+    }
+
+    /// Long calls (a renewal waits for a round): no cache, no cookies, up to 5 minutes.
+    private static let arkSession: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForResource = 330
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: c)
+    }()
+
+    func arkRemind(atEpochSeconds: Int64, title: String, body: String) {
+        ArkReminder.set(at: atEpochSeconds, title: title, body: body)
+    }
+
+    func arkScheduleBackground() { ArkReminder.scheduleBackground() }
 
     func openWebSocket(url: String, listener: IosSocketListener) -> IosSocket {
         RelaySocket(url: url, listener: listener)
     }
+
+    func openWebSocketVia(url: String, listener: IosSocketListener, socksPort: Int32, isolation: String?) -> IosSocket {
+        RelaySocket(url: url, listener: listener, socksPort: socksPort, isolation: isolation)
+    }
+
+    func openOnionWebSocket(url: String, listener: IosSocketListener, socksPort: Int32, isolation: String?) -> IosSocket {
+        OnionSocket(url: url, listener: listener, socksPort: socksPort, isolation: isolation)
+    }
+
+    // MARK: Balance alerts with the app closed (BalanceWatch.swift)
+
+    func watchNotify(title: String, body: String) { BalanceWatch.notify(title: title, body: body) }
+    func watchSchedule(on: Bool) { BalanceWatch.setOn(on) }
+
+    // MARK: Tor (ArtiEngine.swift: KilombinoTor.xcframework)
+
+    func torAvailable() -> Bool { true }
+    func torStart(dir: String, logPath: String, port: Int32) -> String? { ArtiEngine.start(dir: dir, logPath: logPath, port: port) }
+    func torStop() { ArtiEngine.stop() }
+    func torState() -> Int32 { ArtiEngine.state() }
+    func torDir() -> String { ArtiEngine.dir() }
+    func torLogPath() -> String { ArtiEngine.logPath() }
+    func torFreePort() -> Int32 { ArtiEngine.freePort() }
+    func torSocksAnswers(port: Int32) -> Bool { ArtiEngine.socksAnswers(port: port) }
 
     static func topViewController() -> UIViewController? {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
@@ -198,14 +410,16 @@ final class RelaySocket: NSObject, IosSocket, URLSessionWebSocketDelegate {
     private var finished = false
     private var openError: String?
 
-    init(url: String, listener: IosSocketListener) {
+    /// [socksPort] > 0: through the app's Tor, on the circuit named [isolation] (TorProxy).
+    init(url: String, listener: IosSocketListener, socksPort: Int32 = 0, isolation: String? = nil) {
         self.listener = listener
         super.init()
         guard let u = URL(string: url), u.scheme == "wss" else { openError = "only wss:// relays"; return }
         let c = URLSessionConfiguration.ephemeral
         c.httpCookieStorage = nil
         c.urlCache = nil
-        c.timeoutIntervalForRequest = 30
+        c.timeoutIntervalForRequest = socksPort > 0 ? 60 : 30
+        TorProxy.apply(to: c, port: socksPort, isolation: isolation)
         session = URLSession(configuration: c, delegate: self, delegateQueue: nil)
         var req = URLRequest(url: u)
         req.setValue("Kilowallet", forHTTPHeaderField: "User-Agent")
@@ -213,7 +427,7 @@ final class RelaySocket: NSObject, IosSocket, URLSessionWebSocketDelegate {
         t.maximumMessageSize = 8_000_000
         task = t
         t.resume()
-        if opened.wait(timeout: .now() + 20) == .timedOut {
+        if opened.wait(timeout: .now() + (socksPort > 0 ? 60 : 20)) == .timedOut {
             lock.lock(); if openError == nil && !didOpen { openError = "the relay did not answer" }; lock.unlock()
         }
         if openError != nil { t.cancel(); session.invalidateAndCancel(); return }

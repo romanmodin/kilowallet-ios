@@ -1,0 +1,19 @@
+# The Lightning engine: LND as a static library for iOS (Lndmobile.xcframework): Lightning Fork
+# v0.21.4-beta-blake2b.21.2 (Android 1.4.4 ships 21.1; 21.2 fixes RestoreChannelBackups by RPC,
+# SubscribeChannelEvents, and sets godebug multipathtcp=0), with the same neutrino and mobile glue.
+# .github/workflows/lnd-ios.yml builds it from `commit` of `repo`; the app's build fetches
+# that run's artifact and checks it against sha256 before linking it.
+repo=https://github.com/Kilombino/lnd
+branch=ios-engine-21.2
+commit=cae303b36594a2c48c9ce0cbb238672e3a1b284e
+base=paulscode/lightning-fork v0.21.4-beta-blake2b.21.2 (f782c8fb3)
+neutrino=github.com/Kilombino/neutrino-blake2b v0.17.1-blake2b.1.1 (go.mod replace: advertises NODE_BLAKE2B)
+generated=mobile/*_generated.go committed on the branch (lnrpc/gen_protos_docker.sh with COMPILE_MOBILE=1 SUBSERVER_PREFIX=1 needs Docker)
+go=1.27.3
+gomobile=v0.0.0-20261011034528-197770444867
+tags=mobile signrpc walletrpc chainrpc invoicesrpc routerrpc peersrpc neutrinorpc watchtowerrpc wtclientrpc offersrpc
+iosversion=16.0
+run=41375973088
+sha256=e135aeaa1dad6cdd5a77f1d6c7f194e49298cf67ce54f3811dfd9ac6c68da69d
+size=zip 77 MB; bind 42 min on macos-15
+release=v1.0.0-rc2

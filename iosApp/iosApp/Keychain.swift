@@ -86,3 +86,36 @@ enum Keychain {
         return status == errSecSuccess || status == errSecItemNotFound ? nil : "Keychain error \(status)"
     }
 }
+
+/// The Lightning node wallet's password, as its own generic-password item: random, made once by the
+/// app, readable after the device's first unlock and only on this device, with no Face ID, so the
+/// node can start by itself. It encrypts LND's wallet file at rest; the channels' money is in keys
+/// LND derives from the recovery words (Android keeps it the same way, under a Keystore key with
+/// no fingerprint).
+enum LndPassword {
+    private static func query(_ owner: String) -> [String: Any] { [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "com.kilombino.kilowallet.lnd-password",
+        kSecAttrAccount as String: owner,
+    ] }
+
+    static func load(_ owner: String) -> String? {
+        var q = query(owner)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+
+    static func save(_ owner: String, _ hex: String) -> String? {
+        var q = query(owner)
+        q[kSecValueData as String] = Data(hex.utf8)
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        // A failed read must never replace the password of an existing node.
+        let status = SecItemAdd(q as CFDictionary, nil)
+        return status == errSecSuccess ? nil : "Keychain error \(status)"
+    }
+
+    static func delete(_ owner: String) { SecItemDelete(query(owner) as CFDictionary) }
+}
