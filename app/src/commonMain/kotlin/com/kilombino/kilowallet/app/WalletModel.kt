@@ -772,6 +772,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
 
     /** Screenshot mode (a throwaway demo wallet, nothing sent anywhere). */
     val isDemo: Boolean get() = platform.demoScreen != null
+    /** The screenshot run's screen, without its language suffix; null in a real run. */
+    val demoName: String? get() = platform.demoScreen?.substringBefore('@')
     val unlockName: String get() = platform.unlockName
 
     fun dismissMessage() = _state.update { it.copy(message = null) }
@@ -1765,11 +1767,11 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         pools.setEnabled(false)
                         go(Screen.Pools); platform.markReady(screen)
                     }
-                    "pools", "pool-round", "pool-history" -> {
+                    "pools", "pool-round", "pool-history", "pool-v6" -> {
                         withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }
                         go(Screen.Pools); platform.markReady(screen)
                     }
-                    "pool-create" -> { withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }; go(Screen.PoolCreate); platform.markReady(screen) }
+                    "pool-create", "pool-create-v6" -> { withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }; go(Screen.PoolCreate); platform.markReady(screen) }
                     "pool-join" -> {
                         withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }
                         pools.state.value.open?.firstOrNull()?.let { go(Screen.PoolJoin(it.id)) }; platform.markReady(screen)

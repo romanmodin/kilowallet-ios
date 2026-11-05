@@ -51,7 +51,7 @@ capture_failure_diagnostics() {
 
 n=0
 failures=0
-for screen in welcome history create restore watch home simple lightning ln-starting ln-running ln-failed ark locked receive send review replace settings pool-intro pools pool-join pool-create pool-pay pool-round home@es receive@es settings@es lightning@es ln-running@es pools@es pool-round@zh home@zh dice backup cpfp receive-taproot settings-taproot pool-history psbt immature dice@es backup@es pool-history@es psbt@es ark-ready ark-ready@es ark@es ln-bridge ln-move settings-notify ln-bridge@es ark-live tor-live tor-log ln-live wallets private note request export coins recipients filters units backup-check; do
+for screen in welcome history create restore watch home simple lightning ln-starting ln-running ln-failed ark locked receive send review replace settings pool-intro pools pool-join pool-create pool-pay pool-round home@es receive@es settings@es lightning@es ln-running@es pools@es pool-round@zh home@zh dice backup cpfp receive-taproot settings-taproot pool-history psbt immature dice@es backup@es pool-history@es psbt@es ark-ready ark-ready@es ark@es ln-bridge ln-move settings-notify ln-bridge@es ark-live tor-live tor-log ln-live wallets private note request export coins recipients filters units backup-check pool-v6 pool-v6@es pool-create-v6; do
   n=$((n + 1))
   base=${screen%@*}
   name=${screen/@/-}
@@ -123,9 +123,9 @@ for screen in welcome history create restore watch home simple lightning ln-star
   expected=""
   case "$screen" in
     welcome) expected="Restore from words" ;;
-    pool-intro|pools|pool-round|pools@es|pool-round@zh) expected="Kilojoin" ;;
+    pool-intro|pools|pool-round|pools@es|pool-round@zh|pool-v6|pool-v6@es) expected="Kilojoin" ;;
     pool-join) expected="Join" ;;
-    pool-create) expected="Open a pool" ;;
+    pool-create|pool-create-v6) expected="Open a pool" ;;
     pool-pay) expected="Pay through a pool" ;;
     receive@es) expected="Recibir" ;;
     settings@es) expected="Ajustes" ;;

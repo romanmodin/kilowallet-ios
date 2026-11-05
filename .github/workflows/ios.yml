@@ -62,6 +62,20 @@ jobs:
               print(f'{module}: {len(cases)} passing iOS tests')
           PYTEST
 
+      - name: Require asynchronous round and signed reservation regressions
+        run: |
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = Path('core/build/test-results/jvmTest')
+          for name, minimum in [('kilojoin.AsyncRoundsE2ETest', 18), ('SignedRoundRetentionTest', 9)]:
+              path = root / ('TEST-com.kilombino.kilowallet.core.' + name + '.xml')
+              cases = ET.parse(path).getroot().findall('testcase')
+              if len(cases) < minimum or any(c.find(tag) is not None for c in cases for tag in ('failure', 'error', 'skipped')):
+                  raise SystemExit(f'{name}: required executed passing regressions missing')
+              print(f'{name}: {len(cases)} passing cases')
+          PYTEST
+
       - name: Preserve JVM regression evidence before optional live scan
         if: always()
         run: |
