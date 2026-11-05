@@ -81,12 +81,16 @@ for screen in welcome history create restore watch home simple lightning ln-star
   fi
   echo "$screen: startup selected exact case after ${startup}s"
   # BEGIN UI startup wait: selection in Swift alone does not prove Compose rendered.
-  for ui_startup in $(seq 1 120); do
+  # On the first launch of run 41934535236, the exact welcome UI was
+  # visible in the diagnostic capture taken after the marker deadline.
+  ui_limit=120
+  if [ "$screen" = welcome ]; then ui_limit=300; fi
+  for ui_startup in $(seq 1 "$ui_limit"); do
     [ -f "$DATA/Documents/kw-ready-ui-$screen" ] && break
     sleep 1
   done
   if [ ! -f "$DATA/Documents/kw-ready-ui-$screen" ]; then
-    echo "$screen: Compose UI did not start"
+    echo "$screen: Compose UI marker missing after $ui_limit polls"
     capture_failure_diagnostics ui-startup
     exit 1
   fi
@@ -118,6 +122,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
   xcrun simctl io "$UDID" screenshot "$SHOT"
   expected=""
   case "$screen" in
+    welcome) expected="Restore from words" ;;
     pool-intro|pools|pool-round|pools@es|pool-round@zh) expected="Kilojoin" ;;
     pool-join) expected="Join" ;;
     pool-create) expected="Open a pool" ;;
