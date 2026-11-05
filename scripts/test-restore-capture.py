@@ -7,9 +7,9 @@ class RestoreCaptureTest(unittest.TestCase):
   r=subprocess.run(['bash','-c','set -eu; SHOT=fixture.png; screen="$1"; '+F+'printf "%s\\n" "${check_args[@]}"; fi','test',screen],text=True,capture_output=True,check=True)
   return r.stdout.splitlines()
  def test_restore_requires_actual_form(self):
-  self.assertEqual(self.args('restore'),['fixture.png','recovery words'])
+  self.assertEqual(self.args('restore'),['fixture.png','0 words'])
  def test_welcome_cannot_satisfy_restore(self):
-  words='Kilowallet Create wallet Restore from words Watch wallet'
+  words='Kilowallet Hot wallet Its recovery words are generated on this device. Restore from words Watch wallet'
   self.assertFalse(all(x.lower() in words.lower() for x in self.args('restore')[1:]))
  def test_restore_fixture_satisfies_required_words(self):
   words='Restore from words recovery words 0 words RESTORE'

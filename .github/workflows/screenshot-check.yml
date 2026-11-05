@@ -20,6 +20,7 @@ jobs:
       - name: Verify actual note text and reject incorrect text
         run: |
           set -euo pipefail
+          set -x # Record exact fixture commands without recognized image contents.
           swiftc scripts/check-screen.swift -o /tmp/check-screen
           /tmp/check-screen scripts/fixtures/note-screen.png 'October test payout'
           /tmp/check-screen scripts/fixtures/note-screen.png 'Mining payout'
@@ -54,15 +55,15 @@ jobs:
           test "$result" -eq 1
 
           # Actual misleading iOS capture from native42014957376: the shared title
-          # passes the old assertion, so the restore input field must be required.
+          # contains recovery words in its body too. Require the empty-form word count.
           /tmp/check-screen scripts/fixtures/restore-welcome.png 'Restore from words'
           set +e
-          /tmp/check-screen scripts/fixtures/restore-welcome.png 'recovery words'
+          /tmp/check-screen scripts/fixtures/restore-welcome.png '0 words'
           result=$?
           set -e
           test "$result" -eq 1
           # Positive synthetic desktop render of the same shared Compose form.
           # This verifies OCR of the field; it is not iOS runtime qualification.
-          /tmp/check-screen scripts/fixtures/restore-form-desktop.png 'recovery words'
+          /tmp/check-screen scripts/fixtures/restore-form-desktop.png '0 words'
       - name: Verify restore capture requirements
         run: python3 scripts/test-restore-capture.py
