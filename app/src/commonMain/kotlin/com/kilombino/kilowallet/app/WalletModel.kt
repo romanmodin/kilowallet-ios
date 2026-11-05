@@ -1542,7 +1542,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         // A clean activation-date recovery can outlast ten minutes over Tor.
         // Run 41792640577 finished recovery two minutes after that old deadline.
         // Keep actual tower/peer/backup success required, within the runner's
-        // 1900-second readiness budget; this changes only the CI demo wait.
+        // 2600-second readiness budget; this changes only the CI demo wait.
         withTimeoutOrNull(1_200_000) {
             while (runCatching { ln.towers() }.getOrDefault(emptyList()).isEmpty()) {
                 println("KW ln-live: waiting for native server/tower; info: " +
@@ -1670,10 +1670,16 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                             // Do not mark the native demo ready before its engine checks run.
                             // One deadline covers initial sync plus all tower/onion checks;
                             // missing results still fail the independent runtime verifier.
-                            withTimeoutOrNull(1_800_000) {
+                            // Run42014957376 spent 28m44s reaching the full server after
+                            // cold header sync and activation-date recovery. Keep a bounded
+                            // 40-minute probe so the real onion/tower/SCB checks can finish.
+                            // No real wallet birthday, trust rule or success gate changes.
+                            val completed = withTimeoutOrNull(2_400_000) {
                                 lightning.status.first { it is LightningModel.Status.Running }
                                 lightningOverTorCheck()
-                            }
+                                true
+                            } == true
+                            println("KW ln-live: native qualification completed: $completed")
                             platform.markReady(screen)
                         }
                         runCatching {
