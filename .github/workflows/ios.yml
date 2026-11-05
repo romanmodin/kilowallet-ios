@@ -14,7 +14,9 @@ jobs:
   native:
     name: iPhone release and simulator qualification
     runs-on: macos-15-intel
-    timeout-minutes: 200
+    # Measured prior run: ~43m setup/tests +124m capture +device compilation.
+    # Keep every runtime assertion and per-screen deadline; budget device build too.
+    timeout-minutes: 260
     steps:
       - uses: actions/checkout@v4
 
