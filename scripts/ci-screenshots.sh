@@ -140,7 +140,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
     history) expected="Mining payout" ;;
     simple) expected="advanced" ;;
     ln-running|ln-running@es) expected="460 550" ;;
-    restore) expected="Restore from words" ;;
+    restore) expected="recovery words" ;;
     tor-live) expected="Settings" ;;
     private) expected="Balance hidden" ;;
     note) expected="October test payout" ;;

@@ -52,3 +52,17 @@ jobs:
           result=$?
           set -e
           test "$result" -eq 1
+
+          # Actual misleading iOS capture from native42014957376: the shared title
+          # passes the old assertion, so the restore input field must be required.
+          /tmp/check-screen scripts/fixtures/restore-welcome.png 'Restore from words'
+          set +e
+          /tmp/check-screen scripts/fixtures/restore-welcome.png 'recovery words'
+          result=$?
+          set -e
+          test "$result" -eq 1
+          # Positive synthetic desktop render of the same shared Compose form.
+          # This verifies OCR of the field; it is not iOS runtime qualification.
+          /tmp/check-screen scripts/fixtures/restore-form-desktop.png 'recovery words'
+      - name: Verify restore capture requirements
+        run: python3 scripts/test-restore-capture.py
