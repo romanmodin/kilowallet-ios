@@ -65,5 +65,14 @@ jobs:
           # Positive synthetic desktop render of the same shared Compose form.
           # This verifies OCR of the field; it is not iOS runtime qualification.
           /tmp/check-screen scripts/fixtures/restore-form-desktop.png '0 words'
+
+          # Actual correctly rendered iOS form from failed native42069725060.
+          # The word-count OCR was unreliable; the passphrase option is specific to Restore.
+          /tmp/check-screen scripts/fixtures/restore-form-ios-556.png 'I also used a passphrase'
+          set +e
+          /tmp/check-screen scripts/fixtures/restore-welcome.png 'I also used a passphrase'
+          result=$?
+          set -e
+          test "$result" -eq 1
       - name: Verify restore capture requirements
         run: python3 scripts/test-restore-capture.py
