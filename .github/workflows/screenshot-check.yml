@@ -20,6 +20,7 @@ jobs:
       - name: Verify actual note text and reject incorrect text
         run: |
           set -euo pipefail
+          set -x # Identify the exact OCR command when a fixture fails.
           swiftc scripts/check-screen.swift -o /tmp/check-screen
           /tmp/check-screen scripts/fixtures/note-screen.png 'October test payout'
           /tmp/check-screen scripts/fixtures/note-screen.png 'Mining payout'
