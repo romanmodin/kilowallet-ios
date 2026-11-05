@@ -370,16 +370,22 @@ class LightningModel(private val platform: AppPlatform) {
 
     /**
      * Once the node answers, best effort (Android's link): the watchtower, once and only once the
-     * node is fully up (AddTower holds the tower client's lock while it reaches the tower over Tor,
-     * and LND's start waits on that same lock), then a link to Kilombino's node.
+     * node reports SERVER_ACTIVE (AddTower takes a lock also used during startup).
+     * A missing payment peer must not block the independent tower registration.
      */
     private suspend fun link(peers: Int) {
-        if (torOn && !towerAdded && (peers > 0 || linked)) addTowerOnce()
+        if (torOn && !towerAdded) addTowerIfServerReady()
         if (peers > 0) { linked = true; return }
         val now = Lnd.host.nowSeconds()
         if (now - lastLink < 30) return
         lastLink = now
         connectKilombino()
+    }
+
+    /** A peer outage must not prevent tower registration. GetInfo/RPC_ACTIVE alone
+     * is too early: wait for SERVER_ACTIVE to avoid the startup tower-client lock. */
+    internal suspend fun addTowerIfServerReady() {
+        if (Lnd.state() == Lnd.WalletState.SERVER_ACTIVE) addTowerOnce()
     }
 
     private suspend fun addTowerOnce() {
