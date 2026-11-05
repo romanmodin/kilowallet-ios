@@ -220,7 +220,11 @@ class PoolSessionTest {
             chain.mined.clear(); chain.txs.clear()
             chain.confirmedConflict = "aa".repeat(32)
             live.refreshConfirmed()
-            waitFor("confirmed conflicting spend", 30) { restored.phase == PoolSession.Phase.ABORTED }
+            // The session writes the phase before its reason on another coroutine. Wait for
+            // the complete transition, not the intermediate phase assignment.
+            waitFor("confirmed conflicting spend", 30) {
+                restored.phase == PoolSession.Phase.ABORTED && restored.reason.contains(chain.confirmedConflict!!)
+            }
             assertTrue(chain.txs.isEmpty())
             assertTrue(restored.reason.contains(chain.confirmedConflict!!))
 

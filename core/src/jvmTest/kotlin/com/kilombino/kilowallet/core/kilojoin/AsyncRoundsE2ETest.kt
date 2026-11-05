@@ -606,13 +606,22 @@ class AsyncRoundsE2ETest {
         Thread.sleep(2000)
         assertTrue(c.st.voteAcked != c.st.voteId, "no acknowledgment while the creator is down")
         advance(20 * 60)
+        // Hold output delivery so the test can stop the creator in CLOSING deterministically.
+        // Otherwise all outputs can arrive between polls and the correct SIGNING state is missed.
+        relay.hold = { ev -> handIn(a, ev) }
         a.restart()
         waitFor("C recorded after the restart") { c.st.voteAcked == c.st.voteId }
-        // Down again as soon as its round is called: the outputs come in while it's away.
-        waitFor("closing") { a.st.phase == Phase.CLOSING }
+        waitFor("closing saved before restart") {
+            a.st.phase == Phase.CLOSING &&
+                a.savedJson?.let { PoolSession.State.parse(J.parse(it)).phase } == Phase.CLOSING
+        }
         val round = a.st.roundId
+        assertTrue(!round.isNullOrEmpty())
         a.stop()
         advance(5 * 60)
+        // Deliver the queued outputs while the creator is offline; it must recover them from history.
+        relay.hold = { false }
+        assertTrue(relay.release() > 0, "outputs were held until the creator stopped")
         a.restart()
         allSigning(a, b, c)
         assertEquals(round, a.st.roundId)
