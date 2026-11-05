@@ -105,6 +105,7 @@ jobs:
         run: ./scripts/fetch-tor-engine.sh
 
       - name: Build the app for the iOS Simulator (no signing)
+        id: simulator_build
         run: |
           set -euo pipefail
           mkdir -p build
@@ -140,6 +141,7 @@ jobs:
             screenshots-logs/
 
       - name: Build Release for iphoneos without signing
+        if: ${{ !cancelled() && steps.simulator_build.outcome == 'success' }}
         run: |
           set -euo pipefail
           mkdir -p build

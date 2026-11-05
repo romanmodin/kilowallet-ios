@@ -1611,7 +1611,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         when (screen) {
             "welcome" -> platform.markReady(screen)
             "create" -> { go(Screen.CreateShow(Bip39.generate(12))); platform.markReady(screen) }
-            "restore" -> { go(Screen.Restore); platform.markReady(screen) }
+            // App marks this fixture ready only after the actual restore UI draws.
+            "restore" -> go(Screen.Restore)
             "watch" -> { go(Screen.Watch); platform.markReady(screen) }
             else -> scope.launch {
                 // Official public BIP84 fixture, independently derived by CoreTest.bip84OfficialVector.
