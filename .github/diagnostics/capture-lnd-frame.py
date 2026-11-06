@@ -1,7 +1,7 @@
 """Synthetic-only diagnostics. Never updates the app, its engines, or wallets."""
 import hashlib,importlib.util,json,re,shutil,subprocess,sys
 from pathlib import Path
-SOURCE="e9aae6502f3a8a1aa7703424540d5a568214fa5e"
+SOURCE="5ac15b5eeb26296d69008a39e7ff1b4e23d4f8c5"
 SCRIPT_SHA="168c35fafecefca744d2416fee8b07f8d1917d78a61eb7b0f1b31507b087d6c3"
 ANCHOR='done\nxcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true\nls -la "$OUT"'
 EXTRA='''done

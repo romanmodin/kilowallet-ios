@@ -1,10 +1,10 @@
-name: Build8 LND simulator frame diagnostic
+name: Rendering candidate LND frame diagnostic
 'on':
   workflow_dispatch: null
 permissions:
   contents: read
 concurrency:
-  group: kilowallet-build8-lnd-frame-diagnostic
+  group: kilowallet-rendering-candidate-frame-diagnostic
   cancel-in-progress: false
 jobs:
   frame:
@@ -14,12 +14,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: e9aae6502f3a8a1aa7703424540d5a568214fa5e
+        ref: 5ac15b5eeb26296d69008a39e7ff1b4e23d4f8c5
         persist-credentials: false
     - uses: actions/checkout@v4
       with:
         ref: ${{ github.sha }}
-        path: build8-frame-harness
+        path: candidate-frame-harness
         sparse-checkout: .github/diagnostics
         persist-credentials: false
     - uses: actions/setup-java@v4
@@ -30,9 +30,9 @@ jobs:
     - name: Select supported Xcode and verify unchanged source
       run: 'set -euo pipefail
 
-        test "$(git rev-parse HEAD)" = e9aae6502f3a8a1aa7703424540d5a568214fa5e
+        test "$(git rev-parse HEAD)" = 5ac15b5eeb26296d69008a39e7ff1b4e23d4f8c5
 
-        test "$(git rev-parse HEAD^{tree})" = b85a6cc32c31bdfcb6a3f60b1cf83dad5edba3ad
+        test "$(git rev-parse HEAD^{tree})" = 803460785f25cfc0770cfa8b70639b27ca4435d2
 
         selected=$(python3 -c ''import pathlib,re; p=list(pathlib.Path("/Applications").glob("Xcode_26*.app"));
         print(max(p,key=lambda x:tuple(map(int,re.findall(r"[0-9]+",x.name)))))'')
@@ -68,16 +68,16 @@ jobs:
     - name: Capture synthetic live LND and three subsequent frames
       run: 'set -euo pipefail
 
-        python3 -B build8-frame-harness/.github/diagnostics/test-capture-lnd-frame.py
+        python3 -B candidate-frame-harness/.github/diagnostics/test-capture-lnd-frame.py
         -v
 
-        python3 -u build8-frame-harness/.github/diagnostics/capture-lnd-frame.py build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
+        python3 -u candidate-frame-harness/.github/diagnostics/capture-lnd-frame.py build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
 
         '
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: build8-lnd-frame-evidence
+        name: candidate-lnd-frame-evidence
         path: 'screenshots/
 
           screenshots-logs/
