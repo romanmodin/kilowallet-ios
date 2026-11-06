@@ -22,6 +22,15 @@ def check_lnd(log,runtime):
     completed=re.findall(r"KW ln-live: native qualification completed: (true|false)",log)
     selected["nativeQualificationCompleted"]=bool(completed and completed[-1]=="true")
     return {"checks":selected,"passed":all(selected.values()),"physicalPhoneTested":False,"fundedChannelRestoreTested":False,"visualApprovalRequiresManualReview":True}
+def check_frame(path, run=subprocess.run):
+    # check-screen's optional fourth argument is a QR suffix, NOT another phrase.
+    # Validate each phrase with a separate text-only invocation.
+    if not path.exists():
+        return {"exists": False, "phrases": {}, "passed": False}
+    phrases={phrase: run(["build/check-screen",str(path),phrase]).returncode==0
+             for phrase in ["Lightning","EXPORT SCB"]}
+    return {"exists": True, "phrases": phrases, "passed": all(phrases.values())}
+
 def main():
     assert subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip()==SOURCE
     original=Path("scripts/ci-screenshots.sh").read_text()
@@ -48,10 +57,9 @@ def main():
     Path("screenshots-logs/lnd-focused-result.json").write_text(json.dumps(report,indent=2))
     # OCR rejects SpringBoard followups. Actual glyph completeness still needs visual review.
     frames=["55-ln-live.png"]+[f"55-lnd-followup-{n}.png" for n in [1,2,3]]
-    frame_ok=True
-    for frame in frames:
-        path=Path("screenshots")/frame
-        if not path.exists():frame_ok=False;continue
-        if subprocess.run(["build/check-screen",str(path),"Lightning","EXPORT SCB"]).returncode:frame_ok=False
+    frame_results={frame:check_frame(Path("screenshots")/frame) for frame in frames}
+    report["frameChecks"]=frame_results
+    Path("screenshots-logs/lnd-focused-result.json").write_text(json.dumps(report,indent=2))
+    frame_ok=all(item["passed"] for item in frame_results.values())
     assert result.returncode==0 and report["passed"] and frame_ok, "Focused LND runtime or app-frame evidence failed; inspect retained diagnostics"
 if __name__=="__main__":main()
