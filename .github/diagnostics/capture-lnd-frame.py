@@ -42,8 +42,13 @@ def check_frame(path, run=subprocess.run, phrases=("Lightning", "EXPORT SCB")):
     # Validate each phrase with a separate text-only invocation.
     if not path.exists():
         return {"exists": False, "phrases": {}, "passed": False}
-    phrases={phrase: run(["build/check-screen",str(path),phrase]).returncode==0
-             for phrase in phrases}
+    results={}
+    for phrase in phrases:
+        try:
+            results[phrase]=run(["build/check-screen",str(path),phrase],timeout=60).returncode==0
+        except subprocess.TimeoutExpired:
+            results[phrase]=False
+    phrases=results
     return {"exists": True, "phrases": phrases, "passed": all(phrases.values())}
 
 def wait_for_reentry(udid,out,receipt,max_wait=30,run=subprocess.run,clock=time.monotonic,pause=time.sleep,phrases=("Lightning","EXPORT SCB"),prefix="55-lnd-transition"):
@@ -51,13 +56,17 @@ def wait_for_reentry(udid,out,receipt,max_wait=30,run=subprocess.run,clock=time.
     while clock()-start < max_wait:
         pause(min(5,max_wait-(clock()-start)))
         path=out/f"{prefix}-{len(attempts)+1}.png"
-        capture=run(["xcrun","simctl","io",udid,"screenshot",str(path)])
+        try:
+            capture=run(["xcrun","simctl","io",udid,"screenshot",str(path)],timeout=max(0.001,max_wait-(clock()-start)))
+        except subprocess.TimeoutExpired:
+            capture=type("TimedOut",(),{"returncode":124})()
+        captured=clock()-start
         check=check_frame(path,run,phrases=phrases) if capture.returncode==0 else {"passed":False}
         elapsed=clock()-start
-        attempts.append({"file":path.name,"elapsedSeconds":elapsed,"captureExit":capture.returncode,"check":check})
-        ready=check["passed"] and elapsed<=max_wait
+        attempts.append({"file":path.name,"elapsedSeconds":elapsed,"captureElapsedSeconds":captured,"captureExit":capture.returncode,"check":check})
+        ready=check["passed"] and captured<=max_wait
         if ready:break
-    result={"ready":ready,"limitSeconds":max_wait,"elapsedSeconds":clock()-start,"attempts":attempts}
+    result={"ready":ready,"limitSeconds":max_wait,"analysisTimeoutPerPhraseSeconds":60,"elapsedSeconds":clock()-start,"attempts":attempts}
     receipt.write_text(json.dumps(result,indent=2))
     if not ready:raise RuntimeError("Required screen did not become ready within the deadline")
     return result

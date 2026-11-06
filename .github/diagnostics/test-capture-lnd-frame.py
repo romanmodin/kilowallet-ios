@@ -49,7 +49,7 @@ class CaptureTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);now=[0];shots=[0]
    def pause(n):now[0]+=n
-   def run(args):
+   def run(args,**kwargs):
     if args[0]=="xcrun":shots[0]+=1;Path(args[-1]).touch();return SimpleNamespace(returncode=0)
     return SimpleNamespace(returncode=0 if shots[0]>=2 else 1)
    r=m.wait_for_reentry("fake",root,root/"result.json",run=run,clock=lambda:now[0],pause=pause)
@@ -59,28 +59,44 @@ class CaptureTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);now=[0]
    def pause(n):now[0]+=n
-   def run(args):
+   def run(args,**kwargs):
     if args[0]=="xcrun":Path(args[-1]).touch();return SimpleNamespace(returncode=0)
     return SimpleNamespace(returncode=1)
    with self.assertRaises(RuntimeError):m.wait_for_reentry("fake",root,root/"result.json",run=run,clock=lambda:now[0],pause=pause)
    self.assertEqual(now[0],30);self.assertIn('"ready": false',(root/"result.json").read_text())
- def test_late_ocr_cannot_pass_deadline(self):
+ def test_on_time_capture_is_not_rejected_for_late_ocr(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);now=[0]
    def pause(n):now[0]+=n
-   def run(args):
+   def run(args,**kwargs):
     if args[0]=="xcrun":Path(args[-1]).touch()
     else:now[0]+=16
     return SimpleNamespace(returncode=0)
-   with self.assertRaises(RuntimeError):m.wait_for_reentry("fake",root,root/"result.json",run=run,clock=lambda:now[0],pause=pause)
+   r=m.wait_for_reentry("fake",root,root/"result.json",run=run,clock=lambda:now[0],pause=pause)
+   self.assertTrue(r["ready"]);self.assertEqual(r["attempts"][0]["captureElapsedSeconds"],5)
+   self.assertGreater(r["elapsedSeconds"],30)
  def test_settings_requires_its_own_screen_text(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);now=[0];seen=[]
    def pause(n):now[0]+=n
-   def run(args):
+   def run(args,**kwargs):
     if args[0]=="xcrun":Path(args[-1]).touch()
     else:seen.append(args[-1])
     return SimpleNamespace(returncode=0)
    r=m.wait_for_reentry("fake",root,root/"r.json",run=run,clock=lambda:now[0],pause=pause,max_wait=60,phrases=("Settings",),prefix="55-settings-transition")
    self.assertEqual(seen,["Settings"]);self.assertEqual(r["attempts"][0]["file"],"55-settings-transition-1.png")
+ def test_late_capture_still_rejected(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);now=[0]
+   def pause(n):now[0]+=n
+   def run(args,**kwargs):
+    if args[0]=="xcrun":now[0]+=31;Path(args[-1]).touch()
+    return SimpleNamespace(returncode=0)
+   with self.assertRaises(RuntimeError):m.wait_for_reentry("fake",root,root/"r.json",run=run,clock=lambda:now[0],pause=pause)
+ def test_analysis_timeout_fails_closed(self):
+  with tempfile.TemporaryDirectory() as d:
+   path=Path(d)/"frame.png";path.touch()
+   run=Mock(side_effect=m.subprocess.TimeoutExpired("ocr",60))
+   self.assertFalse(m.check_frame(path,run)["passed"])
+   self.assertTrue(all(c.kwargs["timeout"]==60 for c in run.call_args_list))
 if __name__=="__main__":unittest.main()

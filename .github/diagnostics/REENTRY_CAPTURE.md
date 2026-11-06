@@ -7,3 +7,6 @@ The revised diagnostic retains every transition capture and requires both Lightn
 Run the offline audit with evidence directory, exact expected run ID, and independently verified orchestration SHA. A successful automated audit still requires manual image review and does not authorize signing by itself.
 
 Run42218335361 failed before re-entry because Settings was still a blank launch frame, with the return-to-Kilowallet status link. LND native checks passed. Settings now gets its own bounded60-second readiness check with every transition retained; the app re-entry deadline remains30seconds. ContentView.swift shows the earlier black Kilowallet frame is its inactive-scene privacy cover, not evidence of a process restart. Neither failed run is approved.
+
+## Capture timing correction (2026-11-06)
+Run 42225975852 captured Settings successfully but rejected it because OCR finished at 85.6 seconds. Screen readiness now measures screenshot completion, before OCR; Settings retains a 60-second capture limit and re-entry retains 30 seconds. Each OCR invocation is separately bounded to 60 seconds and timeouts fail closed. Receipts record both capture and analysis elapsed times; late captures remain failures. No earlier failed receipt is retroactively approved. The same run independently failed onion-peer connectivity; all five native checks remain mandatory.

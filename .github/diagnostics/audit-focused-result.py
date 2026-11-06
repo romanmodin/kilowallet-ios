@@ -13,16 +13,19 @@ def validate(v):
  for f in FRAMES:
   x=v["frameChecks"][f];assert x["exists"] is True and x["passed"] is True and x["phrases"]=={"Lightning":True,"EXPORT SCB":True}
  settings=v["settingsReadiness"]
- assert settings["ready"] is True and settings["limitSeconds"]==60 and 0<settings["elapsedSeconds"]<=60
+ assert settings["ready"] is True and settings["limitSeconds"]==60 and settings["analysisTimeoutPerPhraseSeconds"]==60
  assert settings["attempts"][-1]["check"]["phrases"]=={"Settings":True}
- assert settings["attempts"][-1]["captureExit"]==0
+ assert settings["attempts"][-1]["captureExit"]==0 and settings["attempts"][-1]["check"]["passed"] is True
+ assert 0<settings["attempts"][-1]["captureElapsedSeconds"]<=60
+ assert settings["attempts"][-1]["captureElapsedSeconds"]<=settings["attempts"][-1]["elapsedSeconds"]<=settings["elapsedSeconds"]
  ready=v["reentryReadiness"]
- assert ready["ready"] is True and ready["limitSeconds"]==30 and 0<ready["elapsedSeconds"]<=30
+ assert ready["ready"] is True and ready["limitSeconds"]==30 and ready["analysisTimeoutPerPhraseSeconds"]==60
  assert ready["attempts"]
  last=ready["attempts"][-1]
  assert last["captureExit"]==0 and last["check"]["passed"] is True
  assert last["check"]["phrases"]=={"Lightning":True,"EXPORT SCB":True}
- assert 0<last["elapsedSeconds"]<=30
+ assert 0<last["captureElapsedSeconds"]<=30
+ assert last["captureElapsedSeconds"]<=last["elapsedSeconds"]<=ready["elapsedSeconds"]
  m=re.fullmatch(r"original=([1-9][0-9]*)\nresumed=([1-9][0-9]*)\n",v["reentryPidReceipt"]);assert m and m[1]==m[2]
  return {"automatedEvidencePassed":True,"manualVisualApproval":False,"releaseApproved":False,"note":"Inspect all seven LND frames and Create and Settings pixels before approval; no physical phone or funded recovery qualification."}
 def main():
