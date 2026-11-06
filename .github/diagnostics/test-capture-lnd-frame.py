@@ -45,4 +45,32 @@ class CaptureTest(unittest.TestCase):
    path=Path(d)/"create.png";path.touch();run=Mock(return_value=SimpleNamespace(returncode=0))
    self.assertTrue(m.check_frame(path,run,phrases=("Your recovery words","I wrote them down"))["passed"])
    self.assertEqual([c.args[0][-1] for c in run.call_args_list],["Your recovery words","I wrote them down"])
+ def test_transition_then_ready_is_retained(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);now=[0];shots=[0]
+   def pause(n):now[0]+=n
+   def run(args):
+    if args[0]=="xcrun":shots[0]+=1;Path(args[-1]).touch();return SimpleNamespace(returncode=0)
+    return SimpleNamespace(returncode=0 if shots[0]>=2 else 1)
+   r=m.wait_for_reentry("fake",root,root/"result.json",run=run,clock=lambda:now[0],pause=pause)
+   self.assertTrue(r["ready"]);self.assertEqual(len(r["attempts"]),2);self.assertFalse(r["attempts"][0]["check"]["passed"])
+   self.assertTrue((root/"55-lnd-transition-1.png").exists())
+ def test_never_ready_fails_with_deadline_receipt(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);now=[0]
+   def pause(n):now[0]+=n
+   def run(args):
+    if args[0]=="xcrun":Path(args[-1]).touch();return SimpleNamespace(returncode=0)
+    return SimpleNamespace(returncode=1)
+   with self.assertRaises(RuntimeError):m.wait_for_reentry("fake",root,root/"result.json",run=run,clock=lambda:now[0],pause=pause)
+   self.assertEqual(now[0],30);self.assertIn('"ready": false',(root/"result.json").read_text())
+ def test_late_ocr_cannot_pass_deadline(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);now=[0]
+   def pause(n):now[0]+=n
+   def run(args):
+    if args[0]=="xcrun":Path(args[-1]).touch()
+    else:now[0]+=16
+    return SimpleNamespace(returncode=0)
+   with self.assertRaises(RuntimeError):m.wait_for_reentry("fake",root,root/"result.json",run=run,clock=lambda:now[0],pause=pause)
 if __name__=="__main__":unittest.main()

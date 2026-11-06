@@ -1,5 +1,5 @@
 """Synthetic-only diagnostics. Never updates the app, its engines, or wallets."""
-import hashlib,importlib.util,json,re,shutil,subprocess,sys
+import hashlib,importlib.util,json,re,shutil,subprocess,sys,time
 from pathlib import Path
 SOURCE="5ac15b5eeb26296d69008a39e7ff1b4e23d4f8c5"
 SCRIPT_SHA="168c35fafecefca744d2416fee8b07f8d1917d78a61eb7b0f1b31507b087d6c3"
@@ -21,6 +21,8 @@ resumed_pid=$(awk -F': ' 'NF == 2 { print $2 }' screenshots-logs/reentry.launch 
 printf 'original=%s\nresumed=%s\n' "$original_pid" "$resumed_pid" > screenshots-logs/reentry-pids.txt
 test -n "$original_pid"
 test "$original_pid" = "$resumed_pid"
+# Retain transition frames; require the real screen within a bounded wait.
+python3 -u candidate-frame-harness/.github/diagnostics/capture-lnd-frame.py --wait-for-reentry "$UDID" "$OUT"
 for frame in 1 2 3; do
   sleep 5
   xcrun simctl io "$UDID" screenshot "$OUT/55-lnd-reentry-$frame.png"
@@ -45,6 +47,22 @@ def check_frame(path, run=subprocess.run, phrases=("Lightning", "EXPORT SCB")):
     phrases={phrase: run(["build/check-screen",str(path),phrase]).returncode==0
              for phrase in phrases}
     return {"exists": True, "phrases": phrases, "passed": all(phrases.values())}
+
+def wait_for_reentry(udid,out,receipt,max_wait=30,run=subprocess.run,clock=time.monotonic,pause=time.sleep):
+    start=clock();attempts=[];ready=False
+    while clock()-start < max_wait:
+        pause(min(5,max_wait-(clock()-start)))
+        path=out/f"55-lnd-transition-{len(attempts)+1}.png"
+        capture=run(["xcrun","simctl","io",udid,"screenshot",str(path)])
+        check=check_frame(path,run) if capture.returncode==0 else {"passed":False}
+        elapsed=clock()-start
+        attempts.append({"file":path.name,"elapsedSeconds":elapsed,"captureExit":capture.returncode,"check":check})
+        ready=check["passed"] and elapsed<=max_wait
+        if ready:break
+    result={"ready":ready,"limitSeconds":max_wait,"elapsedSeconds":clock()-start,"attempts":attempts}
+    receipt.write_text(json.dumps(result,indent=2))
+    if not ready:raise RuntimeError("Lightning screen did not become ready within the re-entry deadline")
+    return result
 
 def main():
     assert subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip()==SOURCE
@@ -81,9 +99,14 @@ def main():
     frames=["55-ln-live.png"]+[f"55-lnd-followup-{n}.png" for n in [1,2,3]]+[f"55-lnd-reentry-{n}.png" for n in [1,2,3]]
     frame_results={frame:check_frame(Path("screenshots")/frame) for frame in frames}
     report["frameChecks"]=frame_results
+    readiness=Path("screenshots-logs/reentry-readiness.json")
+    report["reentryReadiness"]=json.loads(readiness.read_text()) if readiness.exists() else None
     report["createScreen"]=create_check
     report["reentryPidReceipt"]=Path("screenshots-logs/reentry-pids.txt").read_text() if Path("screenshots-logs/reentry-pids.txt").exists() else None
     Path("screenshots-logs/lnd-focused-result.json").write_text(json.dumps(report,indent=2))
     frame_ok=all(item["passed"] for item in frame_results.values())
     assert result.returncode==0 and report["passed"] and frame_ok and created.returncode==0 and create_check["passed"], "Focused LND runtime or app-frame evidence failed; inspect retained diagnostics"
-if __name__=="__main__":main()
+if __name__=="__main__":
+    if sys.argv[1:2]==["--wait-for-reentry"]:
+        wait_for_reentry(sys.argv[2],Path(sys.argv[3]),Path("screenshots-logs/reentry-readiness.json"))
+    else:main()

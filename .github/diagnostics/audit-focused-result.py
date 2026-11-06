@@ -12,10 +12,17 @@ def validate(v):
  assert set(v["frameChecks"])==set(FRAMES)
  for f in FRAMES:
   x=v["frameChecks"][f];assert x["exists"] is True and x["passed"] is True and x["phrases"]=={"Lightning":True,"EXPORT SCB":True}
+ ready=v["reentryReadiness"]
+ assert ready["ready"] is True and ready["limitSeconds"]==30 and 0<ready["elapsedSeconds"]<=30
+ assert ready["attempts"]
+ last=ready["attempts"][-1]
+ assert last["captureExit"]==0 and last["check"]["passed"] is True
+ assert last["check"]["phrases"]=={"Lightning":True,"EXPORT SCB":True}
+ assert 0<last["elapsedSeconds"]<=30
  m=re.fullmatch(r"original=([1-9][0-9]*)\nresumed=([1-9][0-9]*)\n",v["reentryPidReceipt"]);assert m and m[1]==m[2]
  return {"automatedEvidencePassed":True,"manualVisualApproval":False,"releaseApproved":False,"note":"Inspect all seven LND frames and Create and Settings pixels before approval; no physical phone or funded recovery qualification."}
 def main():
- root=Path(sys.argv[1]);r=json.loads((root/"receipt.json").read_text());assert r["run"]==42203584629 and r["attempt"]==1 and r["status"]=="completed" and r["conclusion"]=="success"
+ root=Path(sys.argv[1]);r=json.loads((root/"receipt.json").read_text());assert r["run"]==int(sys.argv[2]) and r["orchestration"]==sys.argv[3] and r["attempt"]==1 and r["status"]=="completed" and r["conclusion"]=="success"
  assert r["artifact"]["apiDigestVerified"] and r["artifact"]["zipCrcVerified"]
  assert r["compilePassed"] and r["capturePassed"]
  v=json.loads((root/"extracted/screenshots-logs/lnd-focused-result.json").read_text());result=validate(v)
