@@ -34,4 +34,15 @@ class CaptureTest(unittest.TestCase):
    path.touch();run.side_effect=[SimpleNamespace(returncode=1),SimpleNamespace(returncode=0)]
    result=m.check_frame(path,run);self.assertFalse(result["passed"])
    self.assertFalse(result["phrases"]["Lightning"]);self.assertTrue(result["phrases"]["EXPORT SCB"])
+ def test_reentry_requires_settings_and_same_process(self):
+  fixed=m.prepare_capture_script(Path("scripts/ci-screenshots.sh").read_text())
+  self.assertIn('com.apple.Preferences',fixed)
+  self.assertIn('test "$original_pid" = "$resumed_pid"',fixed)
+  self.assertLess(fixed.index('55-background-settings.png'),fixed.index('55-lnd-reentry-$frame.png'))
+  self.assertLess(fixed.index('55-lnd-reentry-$frame.png'),fixed.rindex('xcrun simctl terminate'))
+ def test_create_uses_both_specific_phrases(self):
+  with tempfile.TemporaryDirectory() as d:
+   path=Path(d)/"create.png";path.touch();run=Mock(return_value=SimpleNamespace(returncode=0))
+   self.assertTrue(m.check_frame(path,run,phrases=("Your recovery words","I wrote them down"))["passed"])
+   self.assertEqual([c.args[0][-1] for c in run.call_args_list],["Your recovery words","I wrote them down"])
 if __name__=="__main__":unittest.main()

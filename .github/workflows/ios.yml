@@ -65,7 +65,7 @@ jobs:
         test -x build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app/Kilowallet
 
         '
-    - name: Capture synthetic live LND and three subsequent frames
+    - name: Capture create screen and synthetic LND foreground re-entry
       run: 'set -euo pipefail
 
         python3 -B candidate-frame-harness/.github/diagnostics/test-capture-lnd-frame.py
