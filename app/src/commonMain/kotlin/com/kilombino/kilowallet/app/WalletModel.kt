@@ -772,6 +772,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
 
     /** Screenshot mode (a throwaway demo wallet, nothing sent anywhere). */
     val isDemo: Boolean get() = platform.demoScreen != null
+    /** The screenshot run's screen, without its language suffix; null in a real run. */
+    val demoName: String? get() = platform.demoScreen?.substringBefore('@')
     val unlockName: String get() = platform.unlockName
 
     fun dismissMessage() = _state.update { it.copy(message = null) }
@@ -1540,7 +1542,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         // A clean activation-date recovery can outlast ten minutes over Tor.
         // Run 41792640577 finished recovery two minutes after that old deadline.
         // Keep actual tower/peer/backup success required, within the runner's
-        // 1900-second readiness budget; this changes only the CI demo wait.
+        // 2600-second readiness budget; this changes only the CI demo wait.
         withTimeoutOrNull(1_200_000) {
             while (runCatching { ln.towers() }.getOrDefault(emptyList()).isEmpty()) {
                 println("KW ln-live: waiting for native server/tower; info: " +
@@ -1609,7 +1611,8 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         when (screen) {
             "welcome" -> platform.markReady(screen)
             "create" -> { go(Screen.CreateShow(Bip39.generate(12))); platform.markReady(screen) }
-            "restore" -> { go(Screen.Restore); platform.markReady(screen) }
+            // App marks this fixture ready only after the actual restore UI draws.
+            "restore" -> go(Screen.Restore)
             "watch" -> { go(Screen.Watch); platform.markReady(screen) }
             else -> scope.launch {
                 // Official public BIP84 fixture, independently derived by CoreTest.bip84OfficialVector.
@@ -1668,10 +1671,16 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                             // Do not mark the native demo ready before its engine checks run.
                             // One deadline covers initial sync plus all tower/onion checks;
                             // missing results still fail the independent runtime verifier.
-                            withTimeoutOrNull(1_800_000) {
+                            // Run42014957376 spent 28m44s reaching the full server after
+                            // cold header sync and activation-date recovery. Keep a bounded
+                            // 40-minute probe so the real onion/tower/SCB checks can finish.
+                            // No real wallet birthday, trust rule or success gate changes.
+                            val completed = withTimeoutOrNull(2_400_000) {
                                 lightning.status.first { it is LightningModel.Status.Running }
                                 lightningOverTorCheck()
-                            }
+                                true
+                            } == true
+                            println("KW ln-live: native qualification completed: $completed")
                             platform.markReady(screen)
                         }
                         runCatching {
@@ -1765,11 +1774,11 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         pools.setEnabled(false)
                         go(Screen.Pools); platform.markReady(screen)
                     }
-                    "pools", "pool-round", "pool-history" -> {
+                    "pools", "pool-round", "pool-history", "pool-v6" -> {
                         withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }
                         go(Screen.Pools); platform.markReady(screen)
                     }
-                    "pool-create" -> { withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }; go(Screen.PoolCreate); platform.markReady(screen) }
+                    "pool-create", "pool-create-v6" -> { withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }; go(Screen.PoolCreate); platform.markReady(screen) }
                     "pool-join" -> {
                         withContext(Dispatchers.Default) { pools.setUpDemo(screen, words) }
                         pools.state.value.open?.firstOrNull()?.let { go(Screen.PoolJoin(it.id)) }; platform.markReady(screen)

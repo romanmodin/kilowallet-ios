@@ -181,6 +181,9 @@ class PoolsModel(
     private fun persist() {
         val zpub = loadedFor ?: return
         prefs.put(kSessions(zpub), JsonArray(sessions.values.map { it.state.toJson() }).toString())
+        // Persist creator acknowledgments and member signing state before either can leave the app.
+        if (sessions.values.any { !it.done && (it.state.terms.v6 || it.state.postedSig ||
+                it.state.seat.coins.any { coin -> coin.outpoint in it.state.sigs }) }) prefs.flush()
         keepPooledScripts(zpub)
     }
 
@@ -241,6 +244,10 @@ class PoolsModel(
             val h = c.history(Address.electrumScriptHash(st.mixScript)).firstOrNull { it.txid == txid } ?: return@electrum null
             if (h.height <= 0) 0 else c.blockHeight() - h.height + 1
         }
+        override fun conflictDepth(coin: PoolTx.Coin, roundTxid: String): Int? =
+            // Use the same hash-checked, re-read history proof as legacy rounds. A missing
+            // funding transaction or a stale/shallow conflict is not permission to release coins.
+            if (buriedConflict(listOf(coin), roundTxid) != null) PoolSession.DEPTH else null
         override fun save(state: PoolSession.State) {
             // Left on purpose: nothing to keep, and the pool shows in the open list again.
             if (state.phase == PoolSession.Phase.ABORTED && state.reason == PoolSession.LEFT_BY_CHOICE) {
@@ -318,8 +325,12 @@ class PoolsModel(
 
     // ------------------------------------------------------------------ coins and addresses
 
-    /** Outpoints of rounds being built (outputs handed in, signatures asked): a normal send must leave them alone. */
-    fun lockedOutpoints(): Set<String> = sessions.values.filter { !it.done && it.state.phase in setOf(PoolSession.Phase.CLOSING, PoolSession.Phase.SIGNING, PoolSession.Phase.BROADCAST) }
+    /**
+     * Outpoints of rounds being built (outputs handed in, signatures asked): a normal send must leave them alone. A round
+     * sent but not seen (its broadcast failed, or it was reorged out) holds them too until it confirms 6 deep or is given up.
+     */
+    fun lockedOutpoints(): Set<String> = sessions.values.filter { !it.done && it.state.phase in
+        setOf(PoolSession.Phase.CLOSING, PoolSession.Phase.SIGNING, PoolSession.Phase.BROADCAST) }
         .flatMap { s -> s.state.seat.coins.map { it.outpoint } }.toSet()
 
     /** Coins seated in a pool that has not started its round, outpoint → seat key: spendable, at the cost of the seat. */
@@ -503,7 +514,9 @@ class PoolsModel(
      * [pay], a payment: its recipients get the outputs (equal amounts, v4) or their own amounts (v5).
      */
     fun create(amount: Long, rate: Double, minPeers: Int, maxPeers: Int, hours: Int, maxInputs: Int, outputs: Int, password: String?,
-               coins: List<SpendableUtxo>, dest: PoolDest, pay: PoolPayRequest?, done: (Boolean) -> Unit) {
+               coins: List<SpendableUtxo>, dest: PoolDest, pay: PoolPayRequest?,
+               /** Kilojoin v6: asynchronous rounds (longer windows, every answer acknowledged); this phone runs it. */
+               async: Boolean = false, done: (Boolean) -> Unit) {
         val zpub = wallet().zpub ?: return
         run(I18n.tr("Making the pool's keys and announcing it…"), I18n.tr("Unlock to put your coins in the pool"), done) { words ->
             checkPolicy(coins.map { "${it.txid}:${it.vout}" })
@@ -523,7 +536,7 @@ class PoolsModel(
             val keys = withContext(Dispatchers.Default) { keysFor(words, zpub, coins.map(::pathOf), pcs.map { it.pubkey }) }
             val st = withContext(Dispatchers.Default) {
                 val np = PoolSession.newPool(amount, rate, maxPeers, hours, minPeers, !password.isNullOrEmpty(), type,
-                    maxInputs, v3 = true, outputs = outputs, payments = payments)
+                    maxInputs, v3 = true, outputs = outputs, payments = payments, async = async)
                 PoolSession.newState(np.terms, true, np.secret, pcs, keys, coins.map(::pathOf), mix, freshChange(zpub, type),
                     password?.ifEmpty { null }, np.creatorSecret, np.blindPriv)
             }
@@ -623,10 +636,12 @@ class PoolsModel(
             base.terms.copy(id = Hashes.sha256("demo$amount$outputs".encodeToByteArray()).toHex().take(16), amount = amount, outputs = outputs,
                 peers = peers, feeRate = rate, payments = payments, private = private, createdAt = now - 600,
                 version = if (payments.isNotEmpty()) Protocol.V5 else if (outputs > 1) Protocol.V4 else Protocol.V3)
-        val open = listOf(terms(100_000, 1, 2, 2.0), terms(50_000, 2, 3, 1.0), terms(25_000, 2, 1, 3.0, listOf(20_000, 30_000)),
+        // A Kilojoin v6 pool (asynchronous rounds), with the longest windows.
+        val v6 = terms(200_000, 1, 2, 2.0).let { it.copy(id = it.id.reversed(), version = Protocol.V6, async = Protocol.Async.longest(it.expiresAt)) }
+        val open = listOf(terms(100_000, 1, 2, 2.0), v6, terms(50_000, 2, 3, 1.0), terms(25_000, 2, 1, 3.0, listOf(20_000, 30_000)),
             terms(1_000_000, 1, 1, 1.0, private = true))
         _state.update { it.copy(open = open) }
-        if (screen == "pool-round" || screen == "pools" || screen == "pool-history") {
+        if (screen == "pool-round" || screen == "pools" || screen == "pool-history" || screen == "pool-v6") {
             val seed = Bip39.toSeed(words, "")
             val master = Bip32Priv.fromSeed(seed)
             fun k(c: Int, i: Int) = Bip32Priv.derivePath(master, "m/84'/0'/0'/$c/$i").keyBytes()
@@ -654,8 +669,38 @@ class PoolsModel(
                 st.phase = PoolSession.Phase.CONFIRMED; st.txid = "ab".repeat(32)
                 st.sentAt = now - 5400; st.endedAt = now - 4800
             } else st.phase = PoolSession.Phase.OPEN
+            val all = mutableListOf(st)
+            if (screen == "pool-v6") {
+                // Kilojoin v6: a vote whose yes the creator recorded, a round signed and held past its time, and a v3
+                // round sent and 3 blocks deep (confirmed only at 6).
+                st.phase = PoolSession.Phase.CONFIRMED; all.clear()
+                fun v6State(c: Int, i: Int, coin: String, at: Long, pool: Protocol.Terms = v6): PoolSession.State {
+                    val t = pool.copy(id = Hashes.sha256("demo-v6-$coin".encodeToByteArray()).toHex().take(16))
+                    val key = k(c, i)
+                    val mine = PoolTx.Coin(coin.repeat(32), 0, 230_000, com.kilombino.kilowallet.core.crypto.Ec.publicKey(key))
+                    return PoolSession.newState(t, false, null, listOf(mine), listOf(key), listOf("m/84'/0'/0'/$c/$i"),
+                        listOf(Address.scriptPubKey(com.kilombino.kilowallet.core.crypto.Ec.publicKey(k(0, i + 7)), ScriptType.P2WPKH)),
+                        Address.scriptPubKey(com.kilombino.kilowallet.core.crypto.Ec.publicKey(k(1, i + 7)), ScriptType.P2WPKH)).also { x ->
+                        x.token = "demo$coin"; x.poolSecret = np.secret
+                        val me = x.seat.copy(tokenHash = Protocol.tokenHash("demo$coin"))
+                        x.seats = mutableListOf(me, other, third); x.round = mutableListOf(me, other, third)
+                        x.voteDeadline = at
+                    }
+                }
+                val voting = v6State(0, 1, "8c", now + 41 * 60).apply {
+                    phase = PoolSession.Phase.VOTING; round.clear(); voteId = "v6demo"; voteBy = Protocol.tokenHash("x")
+                    votedOn = "v6demo"; voteAcked = "v6demo"; voteN = 1
+                }
+                val held = v6State(0, 2, "9d", 0).apply {
+                    phase = PoolSession.Phase.SIGNING; phaseDeadline = now - 25 * 60; signedAt = now - 2 * 3600
+                    sigs[seat.coin.outpoint] = "30".repeat(36); postedSig = true
+                    reason = "signed, waiting: the others' signatures, or a coin moving"
+                }
+                val sent = v6State(0, 3, "ae", 0, base.terms).apply { phase = PoolSession.Phase.BROADCAST; txid = "cd".repeat(32); sentAt = now - 1800; confs = 3 }
+                all += listOf(voting, held, sent)
+            }
             master.wipe()
-            sessions = mapOf(st.poolId to PoolSession(env(st), st, platform.sockets))
+            sessions = all.associate { it.key to PoolSession(env(it), it, platform.sockets) }
             publish()
         }
         if (screen == "pool-pay") _state.update { it.copy(pay = PoolPayRequest(listOf(

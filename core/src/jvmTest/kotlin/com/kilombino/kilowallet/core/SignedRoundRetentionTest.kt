@@ -12,11 +12,11 @@ import kotlin.test.*
 
 /** Synthetic, no sockets outside FakeRelay and no actual coins. */
 class SignedRoundRetentionTest {
-    private fun state(): PoolSession.State {
+    private fun state(async: Boolean = false): PoolSession.State {
         val key = Hashes.sha256("signed-retention-fixture".encodeToByteArray())
         val script = Address.scriptPubKey(Ec.publicKey(key), ScriptType.P2WPKH)
         val coin = PoolTx.Coin("11".repeat(32), 0, 60_000, Ec.publicKey(key))
-        val pool = PoolSession.newPool(50_000, 2.0, 5, 1)
+        val pool = PoolSession.newPool(50_000, 2.0, 5, 1, async = async)
         return PoolSession.newState(pool.terms, true, pool.secret, listOf(coin), listOf(key),
             listOf("m/test"), listOf(script), Address.scriptPubKey(Ec.publicKey(Hashes.sha256("distinct-change".encodeToByteArray())), ScriptType.P2WPKH),
             creatorSecret = pool.creatorSecret, blindPriv = pool.blindPriv)
@@ -77,4 +77,21 @@ class SignedRoundRetentionTest {
     @Test fun unseenBroadcastDoesNotExpireAfterTwelveHours() = retained(PoolSession.Phase.BROADCAST)
     @Test fun unavailableBackendDoesNotReleaseSignedInput() = retained(PoolSession.Phase.BROADCAST, true)
     @Test fun signedMemberDoesNotExpireAtSignatureDeadline() = retained(PoolSession.Phase.SIGNING)
+    @Test fun v6UnacknowledgedSignatureRestoresReservationAndVoteHistory() {
+        val original = state(async = true).apply {
+            phase = PoolSession.Phase.ABORTED
+            postedSig = false
+            sigs[seat.coin.outpoint] = "00" // signature presence is irrevocable intent, not an acknowledgment
+            voteId = "persisted-vote"; votedOn = voteId; voteAcked = voteId; voteN = 4
+            endedAt = 123
+        }
+        val restored = PoolSession.State.parse(original.toJson())
+        restored.restoreSignedReservation()
+        assertEquals(PoolSession.Phase.SIGNING, restored.phase)
+        assertEquals(0L, restored.endedAt)
+        assertEquals("persisted-vote", restored.voteAcked)
+        assertEquals(4, restored.voteN)
+        assertFalse(restored.postedSig)
+    }
+
 }

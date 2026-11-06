@@ -51,7 +51,7 @@ capture_failure_diagnostics() {
 
 n=0
 failures=0
-for screen in welcome history create restore watch home simple lightning ln-starting ln-running ln-failed ark locked receive send review replace settings pool-intro pools pool-join pool-create pool-pay pool-round home@es receive@es settings@es lightning@es ln-running@es pools@es pool-round@zh home@zh dice backup cpfp receive-taproot settings-taproot pool-history psbt immature dice@es backup@es pool-history@es psbt@es ark-ready ark-ready@es ark@es ln-bridge ln-move settings-notify ln-bridge@es ark-live tor-live tor-log ln-live wallets private note request export coins recipients filters units backup-check; do
+for screen in welcome history create restore watch home simple lightning ln-starting ln-running ln-failed ark locked receive send review replace settings pool-intro pools pool-join pool-create pool-pay pool-round home@es receive@es settings@es lightning@es ln-running@es pools@es pool-round@zh home@zh dice backup cpfp receive-taproot settings-taproot pool-history psbt immature dice@es backup@es pool-history@es psbt@es ark-ready ark-ready@es ark@es ln-bridge ln-move settings-notify ln-bridge@es ark-live tor-live tor-log ln-live wallets private note request export coins recipients filters units backup-check pool-v6 pool-v6@es pool-create-v6; do
   n=$((n + 1))
   base=${screen%@*}
   name=${screen/@/-}
@@ -100,7 +100,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
   case "$base" in pool*) limit=90 ;; esac
   # The real Lightning engine: LND starts, makes a throwaway wallet and syncs with the chain's peers.
   # Tor first (up to 3 min), then the node, the watchtower and Kilombino's node by its onion.
-  [ "$base" = ln-live ] && limit=1900
+  [ "$base" = ln-live ] && limit=2600
   # The real Tor (Arti in the app): it bootstraps, then the Electrum server is reached through it.
   { [ "$base" = tor-live ] || [ "$base" = tor-log ]; } && limit=420
   # The real Ark engine: it starts, makes a throwaway wallet on the Ark server and hands out an address.
@@ -123,9 +123,9 @@ for screen in welcome history create restore watch home simple lightning ln-star
   expected=""
   case "$screen" in
     welcome) expected="Restore from words" ;;
-    pool-intro|pools|pool-round|pools@es|pool-round@zh) expected="Kilojoin" ;;
+    pool-intro|pools|pool-round|pools@es|pool-round@zh|pool-v6|pool-v6@es) expected="Kilojoin" ;;
     pool-join) expected="Join" ;;
-    pool-create) expected="Open a pool" ;;
+    pool-create|pool-create-v6) expected="Open a pool" ;;
     pool-pay) expected="Pay through a pool" ;;
     receive@es) expected="Recibir" ;;
     settings@es) expected="Ajustes" ;;
@@ -140,7 +140,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
     history) expected="Mining payout" ;;
     simple) expected="advanced" ;;
     ln-running|ln-running@es) expected="460 550" ;;
-    restore) expected="Restore from words" ;;
+    restore) expected="I also used a passphrase" ;;
     tor-live) expected="Settings" ;;
     private) expected="Balance hidden" ;;
     note) expected="October test payout" ;;

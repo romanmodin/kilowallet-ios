@@ -48,6 +48,15 @@ fun App(platform: AppPlatform, model: WalletModel = remember { WalletModel(platf
         }
     }
     val state by model.state.collectAsState()
+    if (demo == "restore" && state.screen == Screen.Restore) {
+        LaunchedEffect(model, state.screen) {
+            // Model navigation is not a rendered frame. The runner must wait for the
+            // recovery form, rather than capture the initial Welcome frame.
+            withFrameNanos { }
+            withFrameNanos { }
+            platform.markReady("restore")
+        }
+    }
 
     KilowalletTheme {
         Surface(Modifier.fillMaxSize(), color = Ink) {

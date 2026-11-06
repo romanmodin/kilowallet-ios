@@ -8,6 +8,7 @@ import com.kilombino.kilowallet.core.ln.LndError
 import com.kilombino.kilowallet.core.platform.ioDispatcher
 import com.kilombino.kilowallet.core.platform.secureRandomBytes
 import com.kilombino.kilowallet.core.tor.Tor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -360,10 +361,11 @@ class LightningModel(private val platform: AppPlatform) {
      * reachable when the node runs without Tor.
      */
     val towerNote: String get() = when {
-        torOn -> "A watchtower (Kilombino's, through Tor) watches your channels while the phone is off."
+        torOn && towerAdded -> "Kilombino's watchtower is registered through Tor. Registration alone does not confirm backup coverage."
+        torOn -> "Watchtower: not registered yet. Keep the app open and check Tor before relying on it while the phone is off."
         Tor.available && Lnd.running -> "Watchtower: not reachable. The node started without Tor, and Kilombino's tower is an " +
             "onion service. Turn \"Only over Tor\" on in Settings (it starts with Tor next time), and keep the app opening every few days while you have channels."
-        Tor.available -> "A watchtower (Kilombino's, through Tor) watches your channels while the phone is off."
+        Tor.available -> "Kilombino's watchtower can register through Tor after Lightning starts."
         else -> "Watchtower: not reachable on iPhone yet. Kilombino's tower is an onion service and this " +
             "build has no Tor. Until it is, keep the app opening every few days while you have channels."
     }
@@ -374,7 +376,9 @@ class LightningModel(private val platform: AppPlatform) {
      * and LND's start waits on that same lock), then a link to Kilombino's node.
      */
     private suspend fun link(peers: Int) {
-        if (torOn && !towerAdded && (peers > 0 || linked)) addTowerOnce()
+        // Tower registration is independent of the optional channel peer. SERVER_ACTIVE
+        // avoids LND's startup lock without waiting for that peer to be reachable.
+        if (torOn && !towerAdded) addTowerOnce()
         if (peers > 0) { linked = true; return }
         val now = Lnd.host.nowSeconds()
         if (now - lastLink < 30) return
@@ -383,8 +387,8 @@ class LightningModel(private val platform: AppPlatform) {
     }
 
     private suspend fun addTowerOnce() {
-        if (pref("tower_added") == "1") { towerAdded = true; return }
-        runCatching { Lnd.addTower(Kilombino.TOWER, Kilombino.TOWER_HOST) }.onSuccess {
+        // A saved preference is not proof that the current LND database knows the tower.
+        if (registerDefaultTower(torOn)) {
             towerAdded = true; setPref("tower_added", "1")
         }
     }
@@ -524,5 +528,20 @@ class LightningModel(private val platform: AppPlatform) {
     companion object {
         /** The highest "at least" a user can set: a larger minimum would take the cap away for small payments. */
         const val MAX_FEE_MIN = 1_000L
+    }
+}
+
+/** Register only after LND finishes starting; never depend on a channel peer or a saved UI flag. */
+internal suspend fun registerDefaultTower(torOn: Boolean): Boolean {
+    if (!torOn || Lnd.state() != Lnd.WalletState.SERVER_ACTIVE) return false
+    fun registered(towers: List<Triple<String, List<String>, Boolean>>) =
+        towers.any { it.first == Kilombino.TOWER && Kilombino.TOWER_HOST in it.second && it.third }
+    return try {
+        if (!registered(Lnd.towers())) Lnd.addTower(Kilombino.TOWER, Kilombino.TOWER_HOST)
+        registered(Lnd.towers())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        false // A later refresh retries; a failed call must not claim registration.
     }
 }

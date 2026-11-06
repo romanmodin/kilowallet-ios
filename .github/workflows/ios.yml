@@ -14,7 +14,9 @@ jobs:
   native:
     name: iPhone release and simulator qualification
     runs-on: macos-15-intel
-    timeout-minutes: 200
+    # Measured prior run: ~43m setup/tests +124m capture +device compilation.
+    # Keep every runtime assertion and per-screen deadline; budget device build too.
+    timeout-minutes: 260
     steps:
       - uses: actions/checkout@v4
 
@@ -62,6 +64,20 @@ jobs:
               print(f'{module}: {len(cases)} passing iOS tests')
           PYTEST
 
+      - name: Require asynchronous round and signed reservation regressions
+        run: |
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = Path('core/build/test-results/jvmTest')
+          for name, minimum in [('kilojoin.AsyncRoundsE2ETest', 18), ('SignedRoundRetentionTest', 9)]:
+              path = root / ('TEST-com.kilombino.kilowallet.core.' + name + '.xml')
+              cases = ET.parse(path).getroot().findall('testcase')
+              if len(cases) < minimum or any(c.find(tag) is not None for c in cases for tag in ('failure', 'error', 'skipped')):
+                  raise SystemExit(f'{name}: required executed passing regressions missing')
+              print(f'{name}: {len(cases)} passing cases')
+          PYTEST
+
       - name: Preserve JVM regression evidence before optional live scan
         if: always()
         run: |
@@ -91,6 +107,7 @@ jobs:
         run: ./scripts/fetch-tor-engine.sh
 
       - name: Build the app for the iOS Simulator (no signing)
+        id: simulator_build
         run: |
           set -euo pipefail
           mkdir -p build
@@ -126,6 +143,7 @@ jobs:
             screenshots-logs/
 
       - name: Build Release for iphoneos without signing
+        if: ${{ !cancelled() && steps.simulator_build.outcome == 'success' }}
         run: |
           set -euo pipefail
           mkdir -p build
