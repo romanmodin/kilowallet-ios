@@ -12,6 +12,10 @@ def validate(v):
  assert set(v["frameChecks"])==set(FRAMES)
  for f in FRAMES:
   x=v["frameChecks"][f];assert x["exists"] is True and x["passed"] is True and x["phrases"]=={"Lightning":True,"EXPORT SCB":True}
+ settings=v["settingsReadiness"]
+ assert settings["ready"] is True and settings["limitSeconds"]==60 and 0<settings["elapsedSeconds"]<=60
+ assert settings["attempts"][-1]["check"]["phrases"]=={"Settings":True}
+ assert settings["attempts"][-1]["captureExit"]==0
  ready=v["reentryReadiness"]
  assert ready["ready"] is True and ready["limitSeconds"]==30 and 0<ready["elapsedSeconds"]<=30
  assert ready["attempts"]

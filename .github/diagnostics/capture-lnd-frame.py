@@ -13,9 +13,7 @@ done
 # Switch to Settings, then resume the same app process: actual foreground re-entry.
 original_pid=$(awk -F': ' 'NF == 2 { print $2 }' screenshots-logs/ln-live.launch | tail -1)
 xcrun simctl launch "$UDID" com.apple.Preferences > screenshots-logs/background.launch
-sleep 5
-xcrun simctl io "$UDID" screenshot "$OUT/55-background-settings.png"
-build/check-screen "$OUT/55-background-settings.png" Settings
+python3 -u candidate-frame-harness/.github/diagnostics/capture-lnd-frame.py --wait-for-settings "$UDID" "$OUT"
 xcrun simctl launch "$UDID" "$BUNDLE" | tee screenshots-logs/reentry.launch
 resumed_pid=$(awk -F': ' 'NF == 2 { print $2 }' screenshots-logs/reentry.launch | tail -1)
 printf 'original=%s\nresumed=%s\n' "$original_pid" "$resumed_pid" > screenshots-logs/reentry-pids.txt
@@ -48,20 +46,20 @@ def check_frame(path, run=subprocess.run, phrases=("Lightning", "EXPORT SCB")):
              for phrase in phrases}
     return {"exists": True, "phrases": phrases, "passed": all(phrases.values())}
 
-def wait_for_reentry(udid,out,receipt,max_wait=30,run=subprocess.run,clock=time.monotonic,pause=time.sleep):
+def wait_for_reentry(udid,out,receipt,max_wait=30,run=subprocess.run,clock=time.monotonic,pause=time.sleep,phrases=("Lightning","EXPORT SCB"),prefix="55-lnd-transition"):
     start=clock();attempts=[];ready=False
     while clock()-start < max_wait:
         pause(min(5,max_wait-(clock()-start)))
-        path=out/f"55-lnd-transition-{len(attempts)+1}.png"
+        path=out/f"{prefix}-{len(attempts)+1}.png"
         capture=run(["xcrun","simctl","io",udid,"screenshot",str(path)])
-        check=check_frame(path,run) if capture.returncode==0 else {"passed":False}
+        check=check_frame(path,run,phrases=phrases) if capture.returncode==0 else {"passed":False}
         elapsed=clock()-start
         attempts.append({"file":path.name,"elapsedSeconds":elapsed,"captureExit":capture.returncode,"check":check})
         ready=check["passed"] and elapsed<=max_wait
         if ready:break
     result={"ready":ready,"limitSeconds":max_wait,"elapsedSeconds":clock()-start,"attempts":attempts}
     receipt.write_text(json.dumps(result,indent=2))
-    if not ready:raise RuntimeError("Lightning screen did not become ready within the re-entry deadline")
+    if not ready:raise RuntimeError("Required screen did not become ready within the deadline")
     return result
 
 def main():
@@ -99,6 +97,8 @@ def main():
     frames=["55-ln-live.png"]+[f"55-lnd-followup-{n}.png" for n in [1,2,3]]+[f"55-lnd-reentry-{n}.png" for n in [1,2,3]]
     frame_results={frame:check_frame(Path("screenshots")/frame) for frame in frames}
     report["frameChecks"]=frame_results
+    settings=Path("screenshots-logs/settings-readiness.json")
+    report["settingsReadiness"]=json.loads(settings.read_text()) if settings.exists() else None
     readiness=Path("screenshots-logs/reentry-readiness.json")
     report["reentryReadiness"]=json.loads(readiness.read_text()) if readiness.exists() else None
     report["createScreen"]=create_check
@@ -109,4 +109,8 @@ def main():
 if __name__=="__main__":
     if sys.argv[1:2]==["--wait-for-reentry"]:
         wait_for_reentry(sys.argv[2],Path(sys.argv[3]),Path("screenshots-logs/reentry-readiness.json"))
+    elif sys.argv[1:2]==["--wait-for-settings"]:
+        out=Path(sys.argv[3])
+        result=wait_for_reentry(sys.argv[2],out,Path("screenshots-logs/settings-readiness.json"),max_wait=60,phrases=("Settings",),prefix="55-settings-transition")
+        shutil.copyfile(out/result["attempts"][-1]["file"],out/"55-background-settings.png")
     else:main()

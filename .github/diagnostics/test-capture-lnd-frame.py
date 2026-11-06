@@ -38,7 +38,7 @@ class CaptureTest(unittest.TestCase):
   fixed=m.prepare_capture_script(Path("scripts/ci-screenshots.sh").read_text())
   self.assertIn('com.apple.Preferences',fixed)
   self.assertIn('test "$original_pid" = "$resumed_pid"',fixed)
-  self.assertLess(fixed.index('55-background-settings.png'),fixed.index('55-lnd-reentry-$frame.png'))
+  self.assertLess(fixed.index('--wait-for-settings'),fixed.index('55-lnd-reentry-$frame.png'))
   self.assertLess(fixed.index('55-lnd-reentry-$frame.png'),fixed.rindex('xcrun simctl terminate'))
  def test_create_uses_both_specific_phrases(self):
   with tempfile.TemporaryDirectory() as d:
@@ -73,4 +73,14 @@ class CaptureTest(unittest.TestCase):
     else:now[0]+=16
     return SimpleNamespace(returncode=0)
    with self.assertRaises(RuntimeError):m.wait_for_reentry("fake",root,root/"result.json",run=run,clock=lambda:now[0],pause=pause)
+ def test_settings_requires_its_own_screen_text(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);now=[0];seen=[]
+   def pause(n):now[0]+=n
+   def run(args):
+    if args[0]=="xcrun":Path(args[-1]).touch()
+    else:seen.append(args[-1])
+    return SimpleNamespace(returncode=0)
+   r=m.wait_for_reentry("fake",root,root/"r.json",run=run,clock=lambda:now[0],pause=pause,max_wait=60,phrases=("Settings",),prefix="55-settings-transition")
+   self.assertEqual(seen,["Settings"]);self.assertEqual(r["attempts"][0]["file"],"55-settings-transition-1.png")
 if __name__=="__main__":unittest.main()

@@ -2,7 +2,7 @@ import importlib.util,copy,unittest
 from pathlib import Path
 spec=importlib.util.spec_from_file_location("audit",Path(__file__).with_name("audit-focused-result.py"));m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 def good():
- return {"source":m.SOURCE,"captureExit":0,"checks":{k:True for k in ["lightningUsesTor","onionPeerConnected","watchtowerRegistered","emptyChannelBackupRpc","nativeQualificationCompleted"]},"passed":True,"createScreen":{"captureExit":0,"exists":True,"passed":True,"phrases":{"Your recovery words":True,"I wrote them down":True}},"frameChecks":{f:{"exists":True,"passed":True,"phrases":{"Lightning":True,"EXPORT SCB":True}} for f in m.FRAMES},"reentryReadiness":{"ready":True,"limitSeconds":30,"elapsedSeconds":10,"attempts":[{"captureExit":0,"elapsedSeconds":10,"check":{"passed":True,"phrases":{"Lightning":True,"EXPORT SCB":True}}}]},"reentryPidReceipt":"original=123\nresumed=123\n"}
+ return {"source":m.SOURCE,"captureExit":0,"checks":{k:True for k in ["lightningUsesTor","onionPeerConnected","watchtowerRegistered","emptyChannelBackupRpc","nativeQualificationCompleted"]},"passed":True,"createScreen":{"captureExit":0,"exists":True,"passed":True,"phrases":{"Your recovery words":True,"I wrote them down":True}},"frameChecks":{f:{"exists":True,"passed":True,"phrases":{"Lightning":True,"EXPORT SCB":True}} for f in m.FRAMES},"settingsReadiness":{"ready":True,"limitSeconds":60,"elapsedSeconds":10,"attempts":[{"captureExit":0,"check":{"phrases":{"Settings":True}}}]},"reentryReadiness":{"ready":True,"limitSeconds":30,"elapsedSeconds":10,"attempts":[{"captureExit":0,"elapsedSeconds":10,"check":{"passed":True,"phrases":{"Lightning":True,"EXPORT SCB":True}}}]},"reentryPidReceipt":"original=123\nresumed=123\n"}
 class T(unittest.TestCase):
  def test_complete_evidence_still_requires_visual_review(self):
   r=m.validate(good());self.assertTrue(r["automatedEvidencePassed"]);self.assertFalse(r["releaseApproved"])
@@ -34,5 +34,8 @@ class T(unittest.TestCase):
   with self.assertRaises(AssertionError):m.validate(v)
  def test_unready_rejected(self):
   v=good();v["reentryReadiness"]["ready"]=False
+  with self.assertRaises(AssertionError):m.validate(v)
+ def test_unverified_settings_rejected(self):
+  v=good();v["settingsReadiness"]["attempts"][-1]["check"]["phrases"]["Settings"]=False
   with self.assertRaises(AssertionError):m.validate(v)
 if __name__=="__main__":unittest.main()
