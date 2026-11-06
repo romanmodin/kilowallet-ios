@@ -1,6 +1,6 @@
 name: Build8 LND simulator frame diagnostic
-"on":
-  workflow_dispatch:
+'on':
+  workflow_dispatch: null
 permissions:
   contents: read
 concurrency:
@@ -12,52 +12,78 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 110
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: e9aae6502f3a8a1aa7703424540d5a568214fa5e
-          persist-credentials: false
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 25
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Select supported Xcode and verify unchanged source
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = e9aae6502f3a8a1aa7703424540d5a568214fa5e
-          test "$(git rev-parse HEAD^{tree})" = b85a6cc32c31bdfcb6a3f60b1cf83dad5edba3ad
-          selected=$(python3 -c 'import pathlib,re; p=list(pathlib.Path("/Applications").glob("Xcode_26*.app")); print(max(p,key=lambda x:tuple(map(int,re.findall(r"[0-9]+",x.name)))))')
-          sudo xcode-select --switch "$selected/Contents/Developer"
-          xcodebuild -version
-      - name: Fetch all pinned native engines
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          ./scripts/fetch-lnd-engine.sh
-          ./scripts/fetch-ark-engine.sh
-          ./scripts/fetch-tor-engine.sh
-      - name: Build unchanged simulator app
-        run: |
-          set -euo pipefail
-          mkdir -p build
-          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/dd ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build > build/xcodebuild.log 2>&1
-          test -x build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app/Kilowallet
-      - name: Capture synthetic live LND and three subsequent frames
-        run: |
-          set -euo pipefail
-          ./scripts/ci-screenshots.sh build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app screenshots ln-live
-          UDID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; x=[d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["state"]=="Booted"]; assert len(x)==1; print(x[0])')
-          for n in 1 2 3; do
-            sleep 5
-            xcrun simctl io "$UDID" screenshot "screenshots/55-lnd-followup-$n.png"
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: build8-lnd-frame-evidence
-          path: |
-            screenshots/
-            screenshots-logs/
-            build/xcodebuild.log
-          if-no-files-found: error
-          retention-days: 14
+    - uses: actions/checkout@v4
+      with:
+        ref: e9aae6502f3a8a1aa7703424540d5a568214fa5e
+        persist-credentials: false
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        path: build8-frame-harness
+        sparse-checkout: .github/diagnostics
+        persist-credentials: false
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: 25
+    - uses: gradle/actions/setup-gradle@v4
+    - name: Select supported Xcode and verify unchanged source
+      run: 'set -euo pipefail
+
+        test "$(git rev-parse HEAD)" = e9aae6502f3a8a1aa7703424540d5a568214fa5e
+
+        test "$(git rev-parse HEAD^{tree})" = b85a6cc32c31bdfcb6a3f60b1cf83dad5edba3ad
+
+        selected=$(python3 -c ''import pathlib,re; p=list(pathlib.Path("/Applications").glob("Xcode_26*.app"));
+        print(max(p,key=lambda x:tuple(map(int,re.findall(r"[0-9]+",x.name)))))'')
+
+        sudo xcode-select --switch "$selected/Contents/Developer"
+
+        xcodebuild -version
+
+        '
+    - name: Fetch all pinned native engines
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: './scripts/fetch-lnd-engine.sh
+
+        ./scripts/fetch-ark-engine.sh
+
+        ./scripts/fetch-tor-engine.sh
+
+        '
+    - name: Build unchanged simulator app
+      run: 'set -euo pipefail
+
+        mkdir -p build
+
+        xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration
+        Debug -sdk iphonesimulator -destination ''generic/platform=iOS Simulator''
+        -derivedDataPath build/dd ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO
+        build > build/xcodebuild.log 2>&1
+
+        test -x build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app/Kilowallet
+
+        '
+    - name: Capture synthetic live LND and three subsequent frames
+      run: 'set -euo pipefail
+
+        python3 -B build8-frame-harness/.github/diagnostics/test-capture-lnd-frame.py
+        -v
+
+        python3 -u build8-frame-harness/.github/diagnostics/capture-lnd-frame.py build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
+
+        '
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: build8-lnd-frame-evidence
+        path: 'screenshots/
+
+          screenshots-logs/
+
+          build/xcodebuild.log
+
+          '
+        if-no-files-found: error
+        retention-days: 14

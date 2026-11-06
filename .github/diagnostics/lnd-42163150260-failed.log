@@ -1,0 +1,4 @@
+KW ln-live: node running, Tor in LND: true, SOCKS 50915
+KW ln-live: towers []
+KW ln-live: native qualification completed: false
+2026-11-06 05:13:59.641 [ERR] BTWL: Unable to synchronize wallet to chain, trying again in 5s: unable to persist initial sync data: failed to store sync information 00000000000000000001bbc439e13f749dca850d32c7a2834165338713027e65: failed to fetch block hash for height 961638: block not found

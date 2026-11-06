@@ -1,0 +1,5 @@
+KW ln-live: node running, Tor in LND: true, SOCKS 56121
+KW ln-live: towers [(033f366c8e43b040dbc27648d68e123650ec1f23176de092f39b9e0a7fb4f2a95d, [b44c2u3dar4fdhb4m4vsp3v6kzohh2cqrggk2io74v4olr4nn5nytyad.onion:9911], true)]
+KW ln-live: connect Kilombino by onion: OK; peers {0222d36d7b634ead665c982145f6e4507ad65c4f369902ab3ca11e379d2139dc60=eu2pntt4zzsvm2fkcn5uaqxac2mj5t2fk5ecwyhhejp3deu7env2h2ad.onion:9735}
+KW ln-live: own channel backup 45 bytes; RestoreChannelBackups by RPC: OK
+KW ln-live: native qualification completed: true
