@@ -216,7 +216,8 @@ private fun BtcTab(model: WalletModel, state: UiState, platform: AppPlatform) {
         Explain("block ${formatSats(state.height.toLong())} · ${state.endpoint}" + (state.serverVersion?.let { " · $it" } ?: ""))
     }
 
-    detail?.let { tx -> MovementDialog(tx, state.hideAmounts, state.notes[tx.txid] ?: TransactionNote(), state.amountUnit,
+    // Resolve from current history so confirmations update an already-open dialog.
+    detail?.let { tapped -> state.txs.firstOrNull { it.txid == tapped.txid } ?: tapped }?.let { tx -> MovementDialog(tx, state.hideAmounts, state.notes[tx.txid] ?: TransactionNote(), state.amountUnit,
         onSave = { label, note -> model.saveTransactionNote(state.walletId ?: "", tx.txid, label, note) },
         onReplace = if (hot && tx.pending && (tx.amount ?: 0) < 0) ({ cancel -> detail = null; model.go(Screen.Replace(tx.txid, cancel)) }) else null,
         onClose = { detail = null }) }
