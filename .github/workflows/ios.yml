@@ -1,4 +1,4 @@
-name: History startup stage tracing (diagnostic only)
+name: Uninstrumented History repeated startup
 'on':
   workflow_dispatch: null
 permissions:
@@ -53,10 +53,7 @@ jobs:
         ./scripts/fetch-tor-engine.sh
 
         '
-    - name: Instrument diagnostic-only setup stage markers
-      run: python3 candidate-frame-harness/.github/diagnostics/instrument-history.py
-        --apply
-    - name: Build instrumented diagnostic simulator app
+    - name: Build exact unchanged simulator app
       run: 'set -euo pipefail
 
         mkdir -p build
@@ -69,20 +66,16 @@ jobs:
         test -x build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app/Kilowallet
 
         '
-    - name: Capture Welcome then History with unchanged deadlines
-      run: python3 -u candidate-frame-harness/.github/diagnostics/capture-history-startup.py
+    - name: Require three consecutive unchanged History launches
+      run: python3 -u candidate-frame-harness/.github/diagnostics/repeat-history-unchanged.py
         build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: candidate-history-startup-evidence
-        path: 'screenshots/
-
-          screenshots-logs/
+        name: unchanged-history-repeat-evidence
+        path: 'build/history-repeats/
 
           build/xcodebuild.log
-
-          build/history-trace/
 
           '
         if-no-files-found: error
