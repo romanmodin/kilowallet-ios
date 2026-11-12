@@ -1,0 +1,135 @@
+{
+  "checks": {
+    "lightningUsesTor": true,
+    "onionPeerConnected": false,
+    "watchtowerRegistered": false,
+    "emptyChannelBackupRpc": false,
+    "nativeQualificationCompleted": true
+  },
+  "passed": false,
+  "physicalPhoneTested": false,
+  "fundedChannelRestoreTested": false,
+  "visualApprovalRequiresManualReview": true,
+  "source": "7eb2afe2adfa52bf55b75f7274b6683331b8beda",
+  "screenshotSourceSha256": "168c35fafecefca744d2416fee8b07f8d1917d78a61eb7b0f1b31507b087d6c3",
+  "captureExit": 1,
+  "chainCaches": [
+    {
+      "path": "screenshots-logs/chain-cache/data/chain/bitcoin/mainnet/reg_filter_headers.bin",
+      "size": 31411424,
+      "sha256": "5571b82b675de9bcc564e0a236bf74cdde0d44860403386d16019dc04f906511"
+    },
+    {
+      "path": "screenshots-logs/chain-cache/data/chain/bitcoin/mainnet/neutrino.db",
+      "size": 118312960,
+      "sha256": "1b8101e278722b2675623515c00c998d2323547a1121853f7671a39b0eec10a1"
+    },
+    {
+      "path": "screenshots-logs/chain-cache/data/chain/bitcoin/mainnet/block_headers.bin",
+      "size": 80205788,
+      "sha256": "8d814f77d82bbedfd7d37237e57ea4ed7e012f72542b9e4dfbe563745662c11a"
+    }
+  ],
+  "frameChecks": {
+    "55-ln-live.png": {
+      "exists": true,
+      "phrases": {
+        "Lightning": false,
+        "EXPORT SCB": false
+      },
+      "passed": false
+    },
+    "55-lnd-followup-1.png": {
+      "exists": true,
+      "phrases": {
+        "Lightning": false,
+        "EXPORT SCB": false
+      },
+      "passed": false
+    },
+    "55-lnd-followup-2.png": {
+      "exists": true,
+      "phrases": {
+        "Lightning": false,
+        "EXPORT SCB": false
+      },
+      "passed": false
+    },
+    "55-lnd-followup-3.png": {
+      "exists": true,
+      "phrases": {
+        "Lightning": false,
+        "EXPORT SCB": false
+      },
+      "passed": false
+    },
+    "55-lnd-reentry-1.png": {
+      "exists": false,
+      "phrases": {},
+      "passed": false
+    },
+    "55-lnd-reentry-2.png": {
+      "exists": false,
+      "phrases": {},
+      "passed": false
+    },
+    "55-lnd-reentry-3.png": {
+      "exists": false,
+      "phrases": {},
+      "passed": false
+    }
+  },
+  "settingsReadiness": {
+    "ready": true,
+    "limitSeconds": 60,
+    "analysisTimeoutPerPhraseSeconds": 60,
+    "elapsedSeconds": 30.161115469999913,
+    "attempts": [
+      {
+        "file": "55-settings-transition-1.png",
+        "elapsedSeconds": 30.161082260000057,
+        "captureElapsedSeconds": 25.401020408000022,
+        "captureExit": 0,
+        "check": {
+          "exists": true,
+          "phrases": {
+            "Settings": true
+          },
+          "passed": true
+        }
+      }
+    ]
+  },
+  "reentryReadiness": {
+    "ready": false,
+    "limitSeconds": 30,
+    "analysisTimeoutPerPhraseSeconds": 60,
+    "elapsedSeconds": 146.70462092200023,
+    "attempts": [
+      {
+        "file": "55-lnd-transition-1.png",
+        "elapsedSeconds": 146.70457186500016,
+        "captureElapsedSeconds": 26.140886565999608,
+        "captureExit": 0,
+        "check": {
+          "exists": true,
+          "phrases": {
+            "Lightning": false,
+            "EXPORT SCB": false
+          },
+          "passed": false
+        }
+      }
+    ]
+  },
+  "createScreen": {
+    "exists": true,
+    "phrases": {
+      "Your recovery words": true,
+      "I wrote them down": true
+    },
+    "passed": true,
+    "captureExit": 0
+  },
+  "reentryPidReceipt": "original=26927\nresumed=26927\n"
+}

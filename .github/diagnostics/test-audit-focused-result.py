@@ -1,4 +1,4 @@
-import importlib.util,copy,unittest
+import importlib.util,copy,unittest,json
 from pathlib import Path
 spec=importlib.util.spec_from_file_location("audit",Path(__file__).with_name("audit-focused-result.py"));m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 def good():
@@ -43,5 +43,22 @@ class T(unittest.TestCase):
   self.assertTrue(m.validate(v)["automatedEvidencePassed"])
  def test_settings_late_capture_rejected(self):
   v=good();v["settingsReadiness"]["attempts"][-1]["captureElapsedSeconds"]=61
+  with self.assertRaises(AssertionError):m.validate(v)
+ def test_actual_rc5_attempt2_is_rejected(self):
+  v=json.loads((Path(__file__).parent/"fixtures/rc5-focused-attempt2.json").read_text())
+  with self.assertRaises(AssertionError):m.validate(v)
+ def test_actual_rc5_native_failures_independently_rejected(self):
+  actual=json.loads((Path(__file__).parent/"fixtures/rc5-focused-attempt2.json").read_text())
+  for key,value in actual["checks"].items():
+   if value is False:
+    v=good();v["checks"][key]=False
+    with self.assertRaises(AssertionError):m.validate(v)
+ def test_actual_rc5_frames_rejected_even_with_native_success(self):
+  actual=json.loads((Path(__file__).parent/"fixtures/rc5-focused-attempt2.json").read_text())
+  v=good();v["frameChecks"]=actual["frameChecks"]
+  with self.assertRaises(AssertionError):m.validate(v)
+ def test_actual_rc5_readiness_rejected_even_with_native_success(self):
+  actual=json.loads((Path(__file__).parent/"fixtures/rc5-focused-attempt2.json").read_text())
+  v=good();v["reentryReadiness"]=actual["reentryReadiness"];v["reentryPidReceipt"]=actual["reentryPidReceipt"]
   with self.assertRaises(AssertionError):m.validate(v)
 if __name__=="__main__":unittest.main()

@@ -1,0 +1,9 @@
+# RC5 focused attempt 2 failure
+
+Run 43141780082 attempt 2, job130950958044, source7eb2afe2adfa52bf55b75f7274b6683331b8beda, harness6a0b56e82544d20a69cb031c269fb52bab47118d. Artifact13916022563 SHA256c9b31f2121a639e30d7f4747845e3802e588e2de5da7146680b51efda632b8d3 verified against API and ZIP CRC.
+
+Recovery query718 timed out at04:10:11Z. The next161 failures report unable to persist initial sync data, missing height961638. Engine go.mod at cae303b36594a2c48c9ce0cbb238672e3a1b284e uses btcwallet f2c79d772865. In that exact source, waddrmgr/db.go PutSyncedTo calls fetchBlockHash on the LOCAL wallet sync bucket for previous height when a birthday block exists. Thus the repeated missing-block message is a local sync-index failure, not proof that the remote chain lacks block961638. wallet/wallet.go's initial sync path calls SetSyncedTo then SetBirthdayBlock only when birthdayStamp is nil, then recovery. A stale nil birthday stamp across a recovery retry is a candidate cause; reproduce against the exact engine before changing it. The initial network timeout remains a separate observed trigger.
+
+Manual review of all8 PNGs: Create/Settings complete; initial LND,3 followups and transition frame show missing glyphs. The3 final reentry frames are absent. SamePID26927 is necessary but insufficient. Settings capture25.401s passed; reentry capture26.141s was on time but text failed, analysis ended146.705s. Native onion/watchtower/emptySCB all false. No release approval.
+
+Added actual result fixture and four independent rejection regressions. 17 audit +16 capture tests pass. No app, engine, wallet, birthday, seed, storage, backup or signing guards changed. No blind attempt3. Next: synthetic recovery-retry reproduction and renderer diagnostics during stalled startup. Do not clear databases, move birthdays forward, or relax qualification to obtain a green run.
