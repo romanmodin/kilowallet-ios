@@ -1,9 +1,9 @@
 """Synthetic-only diagnostics. Never updates the app, its engines, or wallets."""
 import hashlib,importlib.util,json,re,shutil,subprocess,sys,time
 from pathlib import Path
-SOURCE="c4f487efc9b328263f15d91c51670d919a9b31b9"
-SCRIPT_SHA="168c35fafecefca744d2416fee8b07f8d1917d78a61eb7b0f1b31507b087d6c3"
-ANCHOR='done\nxcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true\nls -la "$OUT"'
+SOURCE="68148c8c5741c7b84b37f33322e67273f7208a19"
+SCRIPT_SHA="8dbdab79978c7fd685964067fd650353cc097d64d071b4fb0c81dad8b4669709"
+ANCHOR='done\nls -la "$OUT"'
 EXTRA='''done
 # Diagnostic-only: capture while the same synthetic app remains foregrounded.
 for frame in 1 2 3; do

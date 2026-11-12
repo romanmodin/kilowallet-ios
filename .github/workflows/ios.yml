@@ -15,7 +15,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: c4f487efc9b328263f15d91c51670d919a9b31b9
+        ref: 68148c8c5741c7b84b37f33322e67273f7208a19
         persist-credentials: false
     - uses: actions/checkout@v4
       with:
@@ -31,9 +31,9 @@ jobs:
     - name: Select supported Xcode and verify unchanged source
       run: 'set -euo pipefail
 
-        test "$(git rev-parse HEAD)" = c4f487efc9b328263f15d91c51670d919a9b31b9
+        test "$(git rev-parse HEAD)" = 68148c8c5741c7b84b37f33322e67273f7208a19
 
-        test "$(git rev-parse HEAD^{tree})" = aee44f508589fa69b41899821de34a7d26c01607
+        test "$(git rev-parse HEAD^{tree})" = 9feb8f8d99f115c6bb9d10cd2c08358cc5543484
 
         selected=$(python3 -c ''import pathlib,re; p=list(pathlib.Path("/Applications").glob("Xcode_26*.app"));
         print(max(p,key=lambda x:tuple(map(int,re.findall(r"[0-9]+",x.name)))))'')

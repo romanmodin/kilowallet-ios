@@ -1,6 +1,6 @@
 import json,re,hashlib,sys
 from pathlib import Path
-SOURCE="c4f487efc9b328263f15d91c51670d919a9b31b9"
+SOURCE="68148c8c5741c7b84b37f33322e67273f7208a19"
 FRAMES=["55-ln-live.png"]+[f"55-lnd-followup-{n}.png" for n in range(1,4)]+[f"55-lnd-reentry-{n}.png" for n in range(1,4)]
 def validate(v):
  assert v["source"]==SOURCE
