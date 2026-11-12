@@ -637,6 +637,35 @@ class WalletModelTest {
         assertTrue(p.values.keys.none { it.startsWith("pending.") })
     }
 
+    @Test fun roundReservationChangingDuringUnlockBlocksSend() = checkModel { model, p ->
+        for (phase in listOf(
+            com.kilombino.kilowallet.core.kilojoin.PoolSession.Phase.CLOSING,
+            com.kilombino.kilowallet.core.kilojoin.PoolSession.Phase.SIGNING,
+            com.kilombino.kilowallet.core.kilojoin.PoolSession.Phase.BROADCAST,
+        )) {
+            model.setUpDemo("review"); advanceUntilIdle()
+            model.pools.setUpDemo("pools", words)
+            val coin = (model.state.value.send as SendPhase.Review).draft.inputs.single().coinId()
+            val round = model.pools.state.value.rounds.first { st -> st.seat.coins.any { it.outpoint == coin } }
+            round.phase = com.kilombino.kilowallet.core.kilojoin.PoolSession.Phase.OPEN
+            assertFalse(coin in model.pools.lockedOutpoints())
+            val beforeUnlock = p.loadCalls
+            model.confirmSend()
+            assertIs<SendPhase.Signing>(model.state.value.send)
+            assertEquals(beforeUnlock + 1, p.loadCalls)
+            // Simulate the round closing while biometric authentication is still open.
+            round.phase = phase
+            assertTrue(coin in model.pools.lockedOutpoints())
+            p.unlock!!(encodeSecret(words, ""), null)
+            advanceUntilIdle()
+            val failed = assertIs<SendPhase.Failed>(model.state.value.send)
+            assertEquals("A reviewed coin is now frozen. Edit the payment.", failed.message)
+            assertTrue(p.sent.isEmpty())
+            assertTrue(p.values.keys.none { it.startsWith("pending.") })
+            assertEquals(0, p.connections)
+        }
+    }
+
     @Test fun selectionFreezingMaxAndBackgroundUseTheSamePolicy() = checkModel { model, p ->
         model.setUpDemo("coins"); advanceUntilIdle()
         val s = model.state.value
