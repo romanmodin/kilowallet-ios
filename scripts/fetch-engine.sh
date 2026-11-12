@@ -21,7 +21,22 @@ if [ -z "$want" ]; then echo "$ENGINE has no sha256= yet" >&2; exit 1; fi
 zip=$fw.xcframework.zip
 dl=build/$name-fetch; rm -rf "$dl"; mkdir -p "$dl"
 got=""
-if [ -n "$release" ]; then
+# Publisher artifacts are fetched by immutable ID and checked at both ZIP layers.
+artifact_id=$(pin artifact_id)
+if [ -n "$artifact_id" ]; then
+  artifact_repo=$(pin artifact_repo); artifact_sha=$(pin artifact_sha256)
+  artifact_path=$(pin artifact_path)
+  test "$artifact_repo" = romanmodin/kilowallet-ios
+  [[ "$artifact_id" =~ ^[0-9]+$ ]]
+  test "$artifact_path" = "build/$name/$zip"
+  gh api "repos/$artifact_repo/actions/artifacts/$artifact_id/zip" > "$dl/artifact.zip"
+  test "$(shasum -a 256 "$dl/artifact.zip" | cut -d' ' -f1)" = "$artifact_sha"
+  unzip -p "$dl/artifact.zip" "$artifact_path" > "$dl/$zip"
+  got=$(shasum -a 256 "$dl/$zip" | cut -d' ' -f1)
+  test "$got" = "$want"
+  from="publisher artifact $artifact_id"
+fi
+if [ -z "$artifact_id" ] && [ -n "$release" ]; then
   url=https://github.com/Kilombino/kilowallet-ios/releases/download/$release/$zip
   if curl -fsSL --retry 3 -o "$dl/$zip" "$url"; then got=$(shasum -a 256 "$dl/$zip" | cut -d' ' -f1); from="release $release"; fi
 fi

@@ -1,0 +1,28 @@
+{
+  "artifactId": 13926151586,
+  "artifactSHA256": "cfbbb75ae1255c88bcd46d7e196f97bf2b8d90662b3aba8594c675482e660319",
+  "receipt": {
+    "observedAt": "2026-11-12T08:06:19.909952+00:00",
+    "publisherRepository": "romanmodin/kilowallet-ios",
+    "publisherCommit": "eeb8e800b2db0d165135c813461eb52c5890e7c0",
+    "engineSourceCommit": "cae303b36594a2c48c9ce0cbb238672e3a1b284e",
+    "btcwalletSourceCommit": "f2c79d772865e29c955516666c5a57dd12994633",
+    "patchSha256": "fb08082fd64a16a1cc0e6b2313f3d61811a3d1d01b62cb71f378f9a308396864",
+    "goVersion": "go version go1.27.3 darwin/arm64",
+    "runId": "43176758670",
+    "runAttempt": "1",
+    "candidateTestsPassed": true,
+    "unsignedEngineOnly": true,
+    "approvedForSigning": false,
+    "appNativeQualificationPassed": false,
+    "renderingQualified": false,
+    "sha256": {
+      "Lndmobile.xcframework.zip": "321a3496ff31439005fb5c022fa3f695e11a0d8efb86e2e25a01b059769dde2a",
+      "candidate-tests.log": "9b2f2249e3ef88a0534543db3cc629652b51c4f78e1d43b1a53c4f9294a2d7d8",
+      "resolved-modules.txt": "50d51389925974a966faa83ece021af4b9daaafd9fd10e70ad048ffbd0d23cd5",
+      "engine-module.diff": "f7eeb9cca71254f596d9845cd18f26ab6f4d49a9bfa2de7540e716c1a2f87470",
+      "btcwallet-source.diff": "e70ac72dce44cefe86125867727bc1e79b5ee7119bde4e981809cd09cb89f9e8"
+    }
+  },
+  "apiDigestAndCRCVerified": true
+}

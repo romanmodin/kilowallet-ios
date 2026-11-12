@@ -13,7 +13,16 @@ go=1.27.3
 gomobile=v0.0.0-20261011034528-197770444867
 tags=mobile signrpc walletrpc chainrpc invoicesrpc routerrpc peersrpc neutrinorpc watchtowerrpc wtclientrpc offersrpc
 iosversion=16.0
-run=41375973088
-sha256=e135aeaa1dad6cdd5a77f1d6c7f194e49298cf67ce54f3811dfd9ac6c68da69d
+run=43176758670
+sha256=321a3496ff31439005fb5c022fa3f695e11a0d8efb86e2e25a01b059769dde2a
 size=zip 77 MB; bind 42 min on macos-15
-release=v1.0.0-rc2
+release=
+
+# Publisher recovery candidate; original engine plus verified btcwallet retry patch.
+artifact_repo=romanmodin/kilowallet-ios
+artifact_id=13926151586
+artifact_sha256=cfbbb75ae1255c88bcd46d7e196f97bf2b8d90662b3aba8594c675482e660319
+artifact_path=build/lnd/Lndmobile.xcframework.zip
+builder_commit=eeb8e800b2db0d165135c813461eb52c5890e7c0
+btcwallet_commit=f2c79d772865e29c955516666c5a57dd12994633
+patch_sha256=fb08082fd64a16a1cc0e6b2313f3d61811a3d1d01b62cb71f378f9a308396864
