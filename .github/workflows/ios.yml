@@ -1,4 +1,4 @@
-name: Exact-source History startup reproduction
+name: History startup stage tracing (diagnostic only)
 'on':
   workflow_dispatch: null
 permissions:
@@ -35,7 +35,8 @@ jobs:
 
         test "$(git rev-parse HEAD^{tree})" = aee44f508589fa69b41899821de34a7d26c01607
 
-        selected=$(python3 -c ''import pathlib,re; p=list(pathlib.Path("/Applications").glob("Xcode_26*.app")); print(max(p,key=lambda x:tuple(map(int,re.findall(r"[0-9]+",x.name)))))'')
+        selected=$(python3 -c ''import pathlib,re; p=list(pathlib.Path("/Applications").glob("Xcode_26*.app"));
+        print(max(p,key=lambda x:tuple(map(int,re.findall(r"[0-9]+",x.name)))))'')
 
         sudo xcode-select --switch "$selected/Contents/Developer"
 
@@ -52,18 +53,25 @@ jobs:
         ./scripts/fetch-tor-engine.sh
 
         '
-    - name: Build unchanged simulator app
+    - name: Instrument diagnostic-only setup stage markers
+      run: python3 candidate-frame-harness/.github/diagnostics/instrument-history.py
+        --apply
+    - name: Build instrumented diagnostic simulator app
       run: 'set -euo pipefail
 
         mkdir -p build
 
-        xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Debug -sdk iphonesimulator -destination ''generic/platform=iOS Simulator'' -derivedDataPath build/dd ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build > build/xcodebuild.log 2>&1
+        xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration
+        Debug -sdk iphonesimulator -destination ''generic/platform=iOS Simulator''
+        -derivedDataPath build/dd ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO
+        build > build/xcodebuild.log 2>&1
 
         test -x build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app/Kilowallet
 
         '
     - name: Capture Welcome then History with unchanged deadlines
-      run: python3 -u candidate-frame-harness/.github/diagnostics/capture-history-startup.py build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
+      run: python3 -u candidate-frame-harness/.github/diagnostics/capture-history-startup.py
+        build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -73,6 +81,8 @@ jobs:
           screenshots-logs/
 
           build/xcodebuild.log
+
+          build/history-trace/
 
           '
         if-no-files-found: error
