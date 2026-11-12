@@ -99,4 +99,24 @@ class CaptureTest(unittest.TestCase):
    run=Mock(side_effect=m.subprocess.TimeoutExpired("ocr",60))
    self.assertFalse(m.check_frame(path,run)["passed"])
    self.assertTrue(all(c.kwargs["timeout"]==60 for c in run.call_args_list))
+class SettingsPreflightTest(unittest.TestCase):
+ def test_ready_settings_is_required_before_lnd(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);run=Mock();wait=Mock(return_value={"ready":True})
+   self.assertTrue(m.preflight_settings("fake",root,root,run=run,wait=wait)["ready"])
+   self.assertEqual(run.call_args.args[0],["xcrun","simctl","launch","fake","com.apple.Preferences"])
+   self.assertTrue(run.call_args.kwargs["check"])
+   self.assertEqual(wait.call_args.kwargs,{"max_wait":60,"phrases":("Settings",),"prefix":"00-settings-preflight"})
+ def test_black_settings_preserves_failure_and_system_diagnostics(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);run=Mock();wait=Mock(side_effect=RuntimeError("black settings"))
+   with self.assertRaisesRegex(RuntimeError,"black settings"):
+    m.preflight_settings("fake",root,root,run=run,wait=wait)
+   self.assertEqual(run.call_count,2)
+   self.assertTrue((root/"settings-preflight-system.log").exists())
+ def test_launch_failure_does_not_run_readiness(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);wait=Mock();run=Mock(side_effect=m.subprocess.TimeoutExpired("launch",60))
+   with self.assertRaises(m.subprocess.TimeoutExpired):m.preflight_settings("fake",root,root,run=run,wait=wait)
+   wait.assert_not_called()
 if __name__=="__main__":unittest.main()

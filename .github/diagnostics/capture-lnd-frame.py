@@ -71,6 +71,22 @@ def wait_for_reentry(udid,out,receipt,max_wait=30,run=subprocess.run,clock=time.
     if not ready:raise RuntimeError("Required screen did not become ready within the deadline")
     return result
 
+def preflight_settings(udid,out,logs,run=subprocess.run,wait=wait_for_reentry):
+    # Prove the simulator's background app renders before the expensive LND run.
+    # Final Settings/background/PID/re-entry assertions remain independent.
+    logs.mkdir(parents=True,exist_ok=True)
+    with (logs/"settings-preflight.launch").open("w") as launch:
+        run(["xcrun","simctl","launch",udid,"com.apple.Preferences"],stdout=launch,stderr=subprocess.STDOUT,check=True,timeout=60)
+    try:
+        return wait(udid,out,logs/"settings-preflight.json",max_wait=60,phrases=("Settings",),prefix="00-settings-preflight")
+    except Exception:
+        with (logs/"settings-preflight-system.log").open("w") as log:
+            try:
+                run(["xcrun","simctl","spawn",udid,"log","show","--last","3m","--style","compact","--predicate",'process == "Preferences" OR process == "SpringBoard"'],stdout=log,stderr=subprocess.STDOUT,timeout=30)
+            except Exception as diagnostic_error:
+                log.write(str(diagnostic_error))
+        raise
+
 def main():
     assert subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip()==SOURCE
     original=Path("scripts/ci-screenshots.sh").read_text()
@@ -81,6 +97,10 @@ def main():
     Path("screenshots-logs/create-focused-result.json").write_text(json.dumps(create_check,indent=2))
     if not create_check["passed"]:
         subprocess.run(["xcrun","simctl","spawn","booted","log","show","--last","5m","--style","compact","--predicate",'process == "Kilowallet"'],stdout=Path("screenshots-logs/create-system.log").open("w"),stderr=subprocess.STDOUT)
+    boot=json.loads(subprocess.check_output(["xcrun","simctl","list","devices","available","-j"]))
+    ids=[d["udid"] for devices in boot["devices"].values() for d in devices if d["state"]=="Booted"]
+    assert len(ids)==1
+    preflight_settings(ids[0],Path("screenshots"),Path("screenshots-logs"))
     patched=prepare_capture_script(original)
     Path("build/capture-lnd-frame.sh").write_text(patched)
     result=subprocess.run(["bash","build/capture-lnd-frame.sh",sys.argv[1],"screenshots","ln-live"])
