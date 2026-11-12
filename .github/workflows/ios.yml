@@ -72,7 +72,9 @@ jobs:
         python3 -B candidate-frame-harness/.github/diagnostics/test-capture-lnd-frame.py
         -v
 
-        python3 -u candidate-frame-harness/.github/diagnostics/capture-lnd-frame.py build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
+        python3 -B candidate-frame-harness/.github/diagnostics/test-monitor-capture.py -v
+
+        python3 -u candidate-frame-harness/.github/diagnostics/monitor-capture.py screenshots-logs/host-resources.jsonl -- python3 -u candidate-frame-harness/.github/diagnostics/capture-lnd-frame.py build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
 
         '
     - uses: actions/upload-artifact@v4
