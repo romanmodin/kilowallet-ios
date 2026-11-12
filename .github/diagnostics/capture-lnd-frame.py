@@ -98,8 +98,10 @@ def main():
     if not create_check["passed"]:
         subprocess.run(["xcrun","simctl","spawn","booted","log","show","--last","5m","--style","compact","--predicate",'process == "Kilowallet"'],stdout=Path("screenshots-logs/create-system.log").open("w"),stderr=subprocess.STDOUT)
     fixtures=Path("candidate-frame-harness/.github/diagnostics/fixtures")
-    assert not check_frame(fixtures/"settings-icon-springboard.png",phrases=("Settings","General","Accessibility"))["passed"], "SpringBoard must not qualify as Settings"
-    assert check_frame(fixtures/"settings-content-positive.png",phrases=("Settings","General","Accessibility"))["passed"], "Actual Settings fixture must be recognized"
+    fixture_results={name:check_frame(fixtures/name,phrases=("Settings","General","Accessibility")) for name in ["settings-icon-springboard.png","settings-content-positive.png"]}
+    Path("screenshots-logs/settings-fixture-results.json").write_text(json.dumps(fixture_results,indent=2))
+    assert not fixture_results["settings-icon-springboard.png"]["passed"], "SpringBoard must not qualify as Settings"
+    assert fixture_results["settings-content-positive.png"]["passed"], "Actual Settings fixture must be recognized"
     boot=json.loads(subprocess.check_output(["xcrun","simctl","list","devices","available","-j"]))
     ids=[d["udid"] for devices in boot["devices"].values() for d in devices if d["state"]=="Booted"]
     assert len(ids)==1

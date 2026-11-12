@@ -10,7 +10,7 @@ concurrency:
 jobs:
   frame:
     name: Exact-source synthetic LND frame recapture
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 110
     steps:
     - uses: actions/checkout@v4
@@ -29,7 +29,9 @@ jobs:
         java-version: 25
     - uses: gradle/actions/setup-gradle@v4
     - name: Select supported Xcode and verify unchanged source
-      run: 'set -euo pipefail
+      run: 'test "$(uname -m)" = arm64
+
+        set -euo pipefail
 
         test "$(git rev-parse HEAD)" = 68148c8c5741c7b84b37f33322e67273f7208a19
 
@@ -53,14 +55,19 @@ jobs:
         ./scripts/fetch-tor-engine.sh
 
         '
+    - name: Verify pinned arm64 simulator slices
+      run: "python3 - <<'CHECK'\nimport plistlib\nfrom pathlib import Path\nfor name in ['Lndmobile','KilombinoArk','KilombinoTor']:\n\
+        \    root=Path('iosApp/Frameworks')/(name+'.xcframework')\n    data=plistlib.loads((root/'Info.plist').read_bytes())\n\
+        \    matches=[x for x in data['AvailableLibraries'] if x.get('SupportedPlatform')=='ios' and x.get('SupportedPlatformVariant')=='simulator'\
+        \ and 'arm64' in x['SupportedArchitectures']]\n    assert len(matches)==1, (name,matches)\n    print(name,matches[0]['LibraryIdentifier'])\n\
+        CHECK\n"
     - name: Build unchanged simulator app
       run: 'set -euo pipefail
 
         mkdir -p build
 
-        xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration
-        Debug -sdk iphonesimulator -destination ''generic/platform=iOS Simulator''
-        -derivedDataPath build/dd ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO
+        xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Debug -sdk iphonesimulator -destination
+        ''generic/platform=iOS Simulator'' -derivedDataPath build/dd ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO
         build > build/xcodebuild.log 2>&1
 
         test -x build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app/Kilowallet
@@ -69,12 +76,12 @@ jobs:
     - name: Capture create screen and synthetic LND foreground re-entry
       run: 'set -euo pipefail
 
-        python3 -B candidate-frame-harness/.github/diagnostics/test-capture-lnd-frame.py
-        -v
+        python3 -B candidate-frame-harness/.github/diagnostics/test-capture-lnd-frame.py -v
 
         python3 -B candidate-frame-harness/.github/diagnostics/test-monitor-capture.py -v
 
-        python3 -u candidate-frame-harness/.github/diagnostics/monitor-capture.py screenshots-logs/host-resources.jsonl -- python3 -u candidate-frame-harness/.github/diagnostics/capture-lnd-frame.py build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
+        python3 -u candidate-frame-harness/.github/diagnostics/monitor-capture.py screenshots-logs/host-resources.jsonl
+        -- python3 -u candidate-frame-harness/.github/diagnostics/capture-lnd-frame.py build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
 
         '
     - uses: actions/upload-artifact@v4
