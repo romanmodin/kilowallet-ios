@@ -57,5 +57,29 @@ sleep() {
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("captured:ui-startup", r.stdout)
 
+
+class CaptureCleanupTest(unittest.TestCase):
+    def run_cleanup(self, status, launched=True, terminate_status=0):
+        fragment = SCRIPT.split("# BEGIN simulator app cleanup\n", 1)[1].split("# END simulator app cleanup", 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "calls"
+            shell = 'set -euo pipefail\n' + fragment + """
+UDID=synthetic-device
+BUNDLE=synthetic.bundle
+LOG="$1"
+xcrun() { printf '%s\\n' "$*" >> "$LOG"; return "$terminate_status"; }
+"""
+            shell += f"terminate_status={terminate_status}\ncapture_launched={int(launched)}\nexit {status}\n"
+            r = subprocess.run(["bash", "-c", shell, "test", str(log)], capture_output=True, text=True)
+            return r.returncode, log.read_text() if log.exists() else ""
+    def test_success_terminates_owned_app(self):
+        self.assertEqual(self.run_cleanup(0), (0, "simctl terminate synthetic-device synthetic.bundle\n"))
+    def test_failure_preserves_original_status_and_cleans(self):
+        self.assertEqual(self.run_cleanup(17), (17, "simctl terminate synthetic-device synthetic.bundle\n"))
+    def test_cleanup_failure_cannot_mask_capture_failure(self):
+        self.assertEqual(self.run_cleanup(17, terminate_status=9)[0], 17)
+    def test_before_launch_does_not_touch_simulator(self):
+        self.assertEqual(self.run_cleanup(2, launched=False), (2, ""))
+
 if __name__ == "__main__":
     unittest.main()

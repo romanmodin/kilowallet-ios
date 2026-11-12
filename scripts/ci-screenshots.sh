@@ -4,6 +4,18 @@
 # in-memory "abandon … about" test wallet; the Keychain is never touched), and the app writes a
 # marker file into its Documents folder when the screen has settled.
 set -euo pipefail
+# BEGIN simulator app cleanup
+capture_launched=0
+cleanup_capture() {
+  local capture_status=$?
+  trap - EXIT
+  if [ "$capture_launched" -eq 1 ]; then
+    xcrun simctl terminate "$UDID" "$BUNDLE" >/dev/null 2>&1 || true
+  fi
+  exit "$capture_status"
+}
+trap cleanup_capture EXIT
+# END simulator app cleanup
 APP="$1"; OUT="$2"; ONLY="${3:-}"
 mkdir -p build
 CHECKER="build/check-screen"
@@ -64,6 +76,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
   # Let simctl finish launching before polling, without attaching a terminal whose
   # teardown can race the following launch. Keep each app's own stdout/stderr.
   log="$PWD/screenshots-logs/$name.log"
+  capture_launched=1
   SIMCTL_CHILD_KW_DEMO="$screen" xcrun simctl launch --terminate-running-process \
     --stdout="$log" --stderr="$PWD/screenshots-logs/$name.stderr" "$UDID" "$BUNDLE" | tee "screenshots-logs/$name.launch"
   # Hosted Intel simulators can be slow before SwiftUI is constructed. Keep this
@@ -180,7 +193,6 @@ for screen in welcome history create restore watch home simple lightning ln-star
     ls -la "$DATA/Library/Application Support/ark" || true
   fi
 done
-xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
 ls -la "$OUT"
 
 # Preserve all screen evidence even if one OCR assertion fails.
