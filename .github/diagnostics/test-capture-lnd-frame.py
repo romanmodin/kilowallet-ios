@@ -83,8 +83,8 @@ class CaptureTest(unittest.TestCase):
     if args[0]=="xcrun":Path(args[-1]).touch()
     else:seen.append(args[-1])
     return SimpleNamespace(returncode=0)
-   r=m.wait_for_reentry("fake",root,root/"r.json",run=run,clock=lambda:now[0],pause=pause,max_wait=60,phrases=("Settings",),prefix="55-settings-transition")
-   self.assertEqual(seen,["Settings"]);self.assertEqual(r["attempts"][0]["file"],"55-settings-transition-1.png")
+   r=m.wait_for_reentry("fake",root,root/"r.json",run=run,clock=lambda:now[0],pause=pause,max_wait=60,phrases=("Settings","General","Accessibility"),prefix="55-settings-transition")
+   self.assertEqual(seen,["Settings","General","Accessibility"]);self.assertEqual(r["attempts"][0]["file"],"55-settings-transition-1.png")
  def test_late_capture_still_rejected(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);now=[0]
@@ -106,7 +106,7 @@ class SettingsPreflightTest(unittest.TestCase):
    self.assertTrue(m.preflight_settings("fake",root,root,run=run,wait=wait)["ready"])
    self.assertEqual(run.call_args.args[0],["xcrun","simctl","launch","fake","com.apple.Preferences"])
    self.assertTrue(run.call_args.kwargs["check"])
-   self.assertEqual(wait.call_args.kwargs,{"max_wait":60,"phrases":("Settings",),"prefix":"00-settings-preflight"})
+   self.assertEqual(wait.call_args.kwargs,{"max_wait":60,"phrases":("Settings","General","Accessibility"),"prefix":"00-settings-preflight"})
  def test_black_settings_preserves_failure_and_system_diagnostics(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);run=Mock();wait=Mock(side_effect=RuntimeError("black settings"))

@@ -78,7 +78,7 @@ def preflight_settings(udid,out,logs,run=subprocess.run,wait=wait_for_reentry):
     with (logs/"settings-preflight.launch").open("w") as launch:
         run(["xcrun","simctl","launch",udid,"com.apple.Preferences"],stdout=launch,stderr=subprocess.STDOUT,check=True,timeout=60)
     try:
-        return wait(udid,out,logs/"settings-preflight.json",max_wait=60,phrases=("Settings",),prefix="00-settings-preflight")
+        return wait(udid,out,logs/"settings-preflight.json",max_wait=60,phrases=("Settings","General","Accessibility"),prefix="00-settings-preflight")
     except Exception:
         with (logs/"settings-preflight-system.log").open("w") as log:
             try:
@@ -97,6 +97,9 @@ def main():
     Path("screenshots-logs/create-focused-result.json").write_text(json.dumps(create_check,indent=2))
     if not create_check["passed"]:
         subprocess.run(["xcrun","simctl","spawn","booted","log","show","--last","5m","--style","compact","--predicate",'process == "Kilowallet"'],stdout=Path("screenshots-logs/create-system.log").open("w"),stderr=subprocess.STDOUT)
+    fixtures=Path("candidate-frame-harness/.github/diagnostics/fixtures")
+    assert not check_frame(fixtures/"settings-icon-springboard.png",phrases=("Settings","General","Accessibility"))["passed"], "SpringBoard must not qualify as Settings"
+    assert check_frame(fixtures/"settings-content-positive.png",phrases=("Settings","General","Accessibility"))["passed"], "Actual Settings fixture must be recognized"
     boot=json.loads(subprocess.check_output(["xcrun","simctl","list","devices","available","-j"]))
     ids=[d["udid"] for devices in boot["devices"].values() for d in devices if d["state"]=="Booted"]
     assert len(ids)==1
@@ -140,6 +143,6 @@ if __name__=="__main__":
         wait_for_reentry(sys.argv[2],Path(sys.argv[3]),Path("screenshots-logs/reentry-readiness.json"))
     elif sys.argv[1:2]==["--wait-for-settings"]:
         out=Path(sys.argv[3])
-        result=wait_for_reentry(sys.argv[2],out,Path("screenshots-logs/settings-readiness.json"),max_wait=60,phrases=("Settings",),prefix="55-settings-transition")
+        result=wait_for_reentry(sys.argv[2],out,Path("screenshots-logs/settings-readiness.json"),max_wait=60,phrases=("Settings","General","Accessibility"),prefix="55-settings-transition")
         shutil.copyfile(out/result["attempts"][-1]["file"],out/"55-background-settings.png")
     else:main()

@@ -14,7 +14,7 @@ def validate(v):
   x=v["frameChecks"][f];assert x["exists"] is True and x["passed"] is True and x["phrases"]=={"Lightning":True,"EXPORT SCB":True}
  settings=v["settingsReadiness"]
  assert settings["ready"] is True and settings["limitSeconds"]==60 and settings["analysisTimeoutPerPhraseSeconds"]==60
- assert settings["attempts"][-1]["check"]["phrases"]=={"Settings":True}
+ assert settings["attempts"][-1]["check"]["phrases"]=={"Settings":True,"General":True,"Accessibility":True}
  assert settings["attempts"][-1]["captureExit"]==0 and settings["attempts"][-1]["check"]["passed"] is True
  assert 0<settings["attempts"][-1]["captureElapsedSeconds"]<=60
  assert settings["attempts"][-1]["captureElapsedSeconds"]<=settings["attempts"][-1]["elapsedSeconds"]<=settings["elapsedSeconds"]
