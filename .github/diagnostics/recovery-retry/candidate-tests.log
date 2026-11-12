@@ -1,0 +1,25 @@
+go: downloading github.com/btcsuite/btcd/btcutil/psbt v1.1.10
+go: downloading github.com/btcsuite/btcwallet/wallet/txauthor v1.3.5
+go: downloading github.com/btcsuite/btcwallet/wallet/txrules v1.2.2
+go: downloading github.com/btcsuite/btcwallet/wallet/txsizes v1.2.5
+go: downloading github.com/lightninglabs/gozmq v0.0.0-20191113021534-d20a764486bf
+go: downloading github.com/lightningnetwork/lnd/ticker v1.1.1
+go: downloading golang.org/x/term v0.34.0
+go: downloading github.com/lightningnetwork/lnd/clock v1.0.1
+go: downloading github.com/aead/siphash v1.0.1
+go: downloading github.com/kkdai/bstream v1.0.0
+go: downloading github.com/btcsuite/btcd/v2transport v1.0.1
+go: downloading github.com/btcsuite/go-socks v0.0.0-20170105172521-4720035b7bfd
+go: downloading github.com/decred/dcrd/lru v1.1.2
+go: downloading github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
+go: downloading github.com/lightningnetwork/lnd/queue v1.0.1
+go: downloading github.com/stretchr/objx v0.5.2
+=== RUN   TestKilowalletStaleBirthdayRetry
+    kilowallet_retry_test.go:36: reproduced: failed to store sync information 0000000000000000000000000000000000000000000000000000000000000001: failed to fetch block hash for height 961638: block not found
+--- PASS: TestKilowalletStaleBirthdayRetry (0.02s)
+PASS
+ok  	github.com/btcsuite/btcwallet/waddrmgr	0.023s
+=== RUN   TestKilowalletRetryUsesPersistedBirthday
+--- PASS: TestKilowalletRetryUsesPersistedBirthday (3.05s)
+PASS
+ok  	github.com/btcsuite/btcwallet/wallet	3.059s

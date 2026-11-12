@@ -1,0 +1,6 @@
+=== RUN   TestKilowalletRetryUsesPersistedBirthday
+    kilowallet_retry_test.go:42: birthday changed: <nil>
+--- FAIL: TestKilowalletRetryUsesPersistedBirthday (3.04s)
+FAIL
+FAIL	github.com/btcsuite/btcwallet/wallet	3.044s
+FAIL

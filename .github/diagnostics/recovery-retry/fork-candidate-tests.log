@@ -1,0 +1,60 @@
+go: downloading github.com/paulscode/btcd-blake2b v0.25.1-blake2b.7
+go: downloading github.com/Kilombino/neutrino-blake2b v0.17.1-blake2b.1.1
+go: downloading github.com/paulscode/btcwallet-blake2b/wallet/txauthor v1.3.5-blake2b.1
+=== RUN   TestKilowalletStaleBirthdayRetry
+    kilowallet_retry_test.go:36: reproduced: failed to store sync information 0000000000000000000000000000000000000000000000000000000000000001: failed to fetch block hash for height 961638: block not found
+--- PASS: TestKilowalletStaleBirthdayRetry (0.02s)
+=== RUN   TestMigrationPopulateBirthdayBlock
+=== PAUSE TestMigrationPopulateBirthdayBlock
+=== RUN   TestMigrationPopulateBirthdayBlockEstimateTooFar
+=== PAUSE TestMigrationPopulateBirthdayBlockEstimateTooFar
+=== RUN   TestMigrationResetSyncedBlockToBirthday
+=== PAUSE TestMigrationResetSyncedBlockToBirthday
+=== RUN   TestMigrationResetSyncedBlockToBirthdayWithNoBirthdayBlock
+=== PAUSE TestMigrationResetSyncedBlockToBirthdayWithNoBirthdayBlock
+=== CONT  TestMigrationPopulateBirthdayBlock
+=== CONT  TestMigrationResetSyncedBlockToBirthday
+--- PASS: TestMigrationPopulateBirthdayBlock (0.02s)
+=== CONT  TestMigrationResetSyncedBlockToBirthdayWithNoBirthdayBlock
+--- PASS: TestMigrationResetSyncedBlockToBirthday (0.02s)
+=== CONT  TestMigrationPopulateBirthdayBlockEstimateTooFar
+--- PASS: TestMigrationResetSyncedBlockToBirthdayWithNoBirthdayBlock (0.01s)
+--- PASS: TestMigrationPopulateBirthdayBlockEstimateTooFar (0.02s)
+PASS
+ok  	github.com/btcsuite/btcwallet/waddrmgr	0.062s
+=== RUN   TestBirthdaySanityCheckEmptyBirthdayBlock
+=== PAUSE TestBirthdaySanityCheckEmptyBirthdayBlock
+=== RUN   TestBirthdaySanityCheckVerifiedBirthdayBlock
+=== PAUSE TestBirthdaySanityCheckVerifiedBirthdayBlock
+=== RUN   TestBirthdaySanityCheckLowerEstimate
+=== PAUSE TestBirthdaySanityCheckLowerEstimate
+=== RUN   TestBirthdaySanityCheckHigherEstimate
+=== PAUSE TestBirthdaySanityCheckHigherEstimate
+=== RUN   TestKilowalletRetryUsesPersistedBirthday
+--- PASS: TestKilowalletRetryUsesPersistedBirthday (3.08s)
+=== RUN   TestLocateBirthdayBlock
+=== PAUSE TestLocateBirthdayBlock
+=== CONT  TestBirthdaySanityCheckEmptyBirthdayBlock
+=== CONT  TestBirthdaySanityCheckHigherEstimate
+--- PASS: TestBirthdaySanityCheckEmptyBirthdayBlock (0.00s)
+=== CONT  TestBirthdaySanityCheckLowerEstimate
+--- PASS: TestBirthdaySanityCheckLowerEstimate (0.01s)
+=== CONT  TestBirthdaySanityCheckVerifiedBirthdayBlock
+--- PASS: TestBirthdaySanityCheckHigherEstimate (0.01s)
+=== CONT  TestLocateBirthdayBlock
+=== RUN   TestLocateBirthdayBlock/left-right-left-left
+=== RUN   TestLocateBirthdayBlock/right-right-right-left
+=== RUN   TestLocateBirthdayBlock/before_start_height
+=== RUN   TestLocateBirthdayBlock/start_height
+=== RUN   TestLocateBirthdayBlock/end_height
+=== RUN   TestLocateBirthdayBlock/after_end_height
+--- PASS: TestLocateBirthdayBlock (0.00s)
+    --- PASS: TestLocateBirthdayBlock/left-right-left-left (0.00s)
+    --- PASS: TestLocateBirthdayBlock/right-right-right-left (0.00s)
+    --- PASS: TestLocateBirthdayBlock/before_start_height (0.00s)
+    --- PASS: TestLocateBirthdayBlock/start_height (0.00s)
+    --- PASS: TestLocateBirthdayBlock/end_height (0.00s)
+    --- PASS: TestLocateBirthdayBlock/after_end_height (0.00s)
+--- PASS: TestBirthdaySanityCheckVerifiedBirthdayBlock (0.01s)
+PASS
+ok  	github.com/btcsuite/btcwallet/wallet	3.102s

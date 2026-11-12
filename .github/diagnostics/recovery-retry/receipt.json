@@ -1,0 +1,23 @@
+{
+  "observedAt": "2026-11-12T06:29:54.151698+00:00",
+  "dependency": "github.com/btcsuite/btcwallet",
+  "commitPrefix": "f2c79d772865",
+  "engineCommit": "cae303b36594a2c48c9ce0cbb238672e3a1b284e",
+  "toolchain": "go1.27.4 linux/amd64",
+  "syntheticDBOnly": true,
+  "reproduction": "Exact missing previous height961638 reproduced by repeating initial SetSyncedTo after birthday persistence and simulated recovery progress",
+  "candidateTests": "Two targeted tests pass with upstream dependencies; fresh nil, persisted verified birthday, no progress rewind, unchanged birthday, unverified rejection",
+  "negativeControl": "Ignoring persisted verified birthday fails as expected; candidate restored",
+  "forkDependencyValidation": "PASS: 11 top-level tests plus6 subtests; pinned BLAKE2b btcd/neutrino/txauthor replacements",
+  "installedInApp": false,
+  "fullRecoveryRetryIntegrationTest": false,
+  "iOSNativeRebuildQualified": false,
+  "renderingFixed": false,
+  "patchSha256": "fb08082fd64a16a1cc0e6b2313f3d61811a3d1d01b62cb71f378f9a308396864",
+  "verifiedAt": "2026-11-12T06:30:34.735472+00:00",
+  "logs": {
+    "candidate-tests.log": "41982a1bf892cab2b0720a78138b1b49a5c58e344bd4cb1dc31c7bd4f2aefec6",
+    "negative-control.log": "66f8b8cf732bb9b3aa825f39b35105da6267c1d7dbb5fe53c636657c9bad20d5",
+    "fork-candidate-tests.log": "734061f58b7823342d5f37ef77ad9b30cd9fce54d0dd10c51f43e9d2cf65a20f"
+  }
+}

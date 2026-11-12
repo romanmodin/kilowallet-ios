@@ -1,0 +1,39 @@
+--- a/wallet/wallet.go
++++ b/wallet/wallet.go
+@@ -416,6 +416,15 @@
+ 			return err
+ 		}
+ 		log.Debug("Chain backend synced to tip!")
++	}
++
++	// A previous attempt may have committed the birthday before recovery
++	// failed. Refresh a stale nil argument instead of rewinding synced-to.
++	if birthdayStamp == nil {
++		birthdayStamp, err = w.persistedBirthdayForRetry()
++		if err != nil {
++			return err
++		}
+ 	}
+ 
+ 	// If we've yet to find our birthday block, we'll do so now.
+@@ -4453,3 +4462,20 @@
+ 
+ 	return w, nil
+ }
++
++// persistedBirthdayForRetry only reads persisted state; it never advances a
++// birthday, rewinds recovery progress, or changes wallet identity.
++func (w *Wallet) persistedBirthdayForRetry() (*waddrmgr.BlockStamp, error) {
++	store := &walletBirthdayStore{db: w.db, manager: w.Manager}
++	block, verified, err := store.BirthdayBlock()
++	if waddrmgr.IsError(err, waddrmgr.ErrBirthdayBlockNotSet) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, err
++	}
++	if !verified {
++		return nil, fmt.Errorf("persisted birthday block is unverified")
++	}
++	return &block, nil
++}
