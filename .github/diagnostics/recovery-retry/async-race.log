@@ -1,0 +1,5 @@
+=== RUN   TestKilowalletAsyncRecoveryRetry
+    kilowallet_sync_retry_test.go:173: real async retry: committed batch, injected timeout, resumed last block; birthday and address unchanged; batches=[[961640 963639] [963640 963640] [963640 963640]]
+--- PASS: TestKilowalletAsyncRecoveryRetry (23.11s)
+PASS
+ok  	github.com/btcsuite/btcwallet/wallet	24.165s

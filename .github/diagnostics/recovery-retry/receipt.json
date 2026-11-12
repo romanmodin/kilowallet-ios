@@ -10,14 +10,23 @@
   "negativeControl": "Ignoring persisted verified birthday fails as expected; candidate restored",
   "forkDependencyValidation": "PASS: 11 top-level tests plus6 subtests; pinned BLAKE2b btcd/neutrino/txauthor replacements",
   "installedInApp": false,
-  "fullRecoveryRetryIntegrationTest": false,
+  "fullRecoveryRetryIntegrationTest": true,
   "iOSNativeRebuildQualified": false,
   "renderingFixed": false,
   "patchSha256": "fb08082fd64a16a1cc0e6b2313f3d61811a3d1d01b62cb71f378f9a308396864",
-  "verifiedAt": "2026-11-12T06:30:34.735472+00:00",
+  "verifiedAt": "2026-11-12T07:37:10.538130+00:00",
   "logs": {
     "candidate-tests.log": "41982a1bf892cab2b0720a78138b1b49a5c58e344bd4cb1dc31c7bd4f2aefec6",
     "negative-control.log": "66f8b8cf732bb9b3aa825f39b35105da6267c1d7dbb5fe53c636657c9bad20d5",
-    "fork-candidate-tests.log": "734061f58b7823342d5f37ef77ad9b30cd9fce54d0dd10c51f43e9d2cf65a20f"
-  }
+    "fork-candidate-tests.log": "734061f58b7823342d5f37ef77ad9b30cd9fce54d0dd10c51f43e9d2cf65a20f",
+    "wallet_sync_retry_test.go": "f4ed7e848459de2e117b16489cc89a4e3d093403c8e97508dc997e286e335daf",
+    "async-negative-control.log": "56ebdd674d91509c68be262e1a5e0e9ca7e3fdcdd4f3af92656180ab12bae9ff",
+    "async-race.log": "346ed8dff81e1e6d6ebd15b260cc04fff1e139ec226bc9bb98b0cb5111f6c179",
+    "engine-integration.log": "6681e05f9f15201c14be395e61b14034ca91008dde03cf1979123c2509417107"
+  },
+  "asyncRecoveryRetry": "ClientConnected actual waitForSync: commits 2000 blocks, injected FilterBlocks timeout, retries only final block; birthday and persisted BIP84 address/pubkey unchanged",
+  "asyncNegativeControl": "Removing refresh invocation fails: never reaches rescan after failure",
+  "raceDetector": "PASS",
+  "engineDependencyGraphValidation": "PASS using engine cae303b go.mod plus local candidate btcwallet replacement",
+  "btcwalletCommit": "f2c79d772865e29c955516666c5a57dd12994633"
 }

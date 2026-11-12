@@ -1,0 +1,70 @@
+go: downloading github.com/btcsuite/btcd/btcec/v2 v2.3.6
+go: downloading github.com/stretchr/testify v1.11.1
+go: downloading github.com/btcsuite/btcwallet/wtxmgr v1.5.7-0.20260915140118-f2c79d772865
+go: downloading golang.org/x/sync v0.24.0
+go: downloading golang.org/x/crypto v0.58.0
+go: downloading go.etcd.io/bbolt v1.4.3
+go: downloading golang.org/x/term v0.47.0
+go: downloading github.com/lightningnetwork/lnd/clock v1.1.1
+go: downloading golang.org/x/sys v0.49.0
+go: downloading github.com/lightningnetwork/lnd/queue v1.2.0
+=== RUN   TestBirthdaySanityCheckEmptyBirthdayBlock
+=== PAUSE TestBirthdaySanityCheckEmptyBirthdayBlock
+=== RUN   TestBirthdaySanityCheckVerifiedBirthdayBlock
+=== PAUSE TestBirthdaySanityCheckVerifiedBirthdayBlock
+=== RUN   TestBirthdaySanityCheckLowerEstimate
+=== PAUSE TestBirthdaySanityCheckLowerEstimate
+=== RUN   TestBirthdaySanityCheckHigherEstimate
+=== PAUSE TestBirthdaySanityCheckHigherEstimate
+=== RUN   TestKilowalletRetryUsesPersistedBirthday
+--- PASS: TestKilowalletRetryUsesPersistedBirthday (3.14s)
+=== RUN   TestKilowalletAsyncRecoveryRetry
+    kilowallet_sync_retry_test.go:173: real async retry: committed batch, injected timeout, resumed last block; birthday and address unchanged; batches=[[961640 963639] [963640 963640] [963640 963640]]
+--- PASS: TestKilowalletAsyncRecoveryRetry (5.11s)
+=== RUN   TestLocateBirthdayBlock
+=== PAUSE TestLocateBirthdayBlock
+=== CONT  TestBirthdaySanityCheckEmptyBirthdayBlock
+--- PASS: TestBirthdaySanityCheckEmptyBirthdayBlock (0.00s)
+=== CONT  TestLocateBirthdayBlock
+=== CONT  TestBirthdaySanityCheckLowerEstimate
+=== RUN   TestLocateBirthdayBlock/left-right-left-left
+=== CONT  TestBirthdaySanityCheckVerifiedBirthdayBlock
+=== CONT  TestBirthdaySanityCheckHigherEstimate
+=== RUN   TestLocateBirthdayBlock/right-right-right-left
+=== RUN   TestLocateBirthdayBlock/before_start_height
+=== RUN   TestLocateBirthdayBlock/start_height
+=== RUN   TestLocateBirthdayBlock/end_height
+=== RUN   TestLocateBirthdayBlock/after_end_height
+--- PASS: TestLocateBirthdayBlock (0.00s)
+    --- PASS: TestLocateBirthdayBlock/left-right-left-left (0.00s)
+    --- PASS: TestLocateBirthdayBlock/right-right-right-left (0.00s)
+    --- PASS: TestLocateBirthdayBlock/before_start_height (0.00s)
+    --- PASS: TestLocateBirthdayBlock/start_height (0.00s)
+    --- PASS: TestLocateBirthdayBlock/end_height (0.00s)
+    --- PASS: TestLocateBirthdayBlock/after_end_height (0.00s)
+--- PASS: TestBirthdaySanityCheckVerifiedBirthdayBlock (0.01s)
+--- PASS: TestBirthdaySanityCheckHigherEstimate (0.01s)
+--- PASS: TestBirthdaySanityCheckLowerEstimate (0.01s)
+PASS
+ok  	github.com/btcsuite/btcwallet/wallet	8.267s
+=== RUN   TestKilowalletStaleBirthdayRetry
+    kilowallet_retry_test.go:36: reproduced: failed to store sync information 0000000000000000000000000000000000000000000000000000000000000001: failed to fetch block hash for height 961638: block not found
+--- PASS: TestKilowalletStaleBirthdayRetry (0.02s)
+=== RUN   TestMigrationPopulateBirthdayBlock
+=== PAUSE TestMigrationPopulateBirthdayBlock
+=== RUN   TestMigrationPopulateBirthdayBlockEstimateTooFar
+=== PAUSE TestMigrationPopulateBirthdayBlockEstimateTooFar
+=== RUN   TestMigrationResetSyncedBlockToBirthday
+=== PAUSE TestMigrationResetSyncedBlockToBirthday
+=== RUN   TestMigrationResetSyncedBlockToBirthdayWithNoBirthdayBlock
+=== PAUSE TestMigrationResetSyncedBlockToBirthdayWithNoBirthdayBlock
+=== CONT  TestMigrationPopulateBirthdayBlock
+=== CONT  TestMigrationResetSyncedBlockToBirthday
+=== CONT  TestMigrationResetSyncedBlockToBirthdayWithNoBirthdayBlock
+=== CONT  TestMigrationPopulateBirthdayBlockEstimateTooFar
+--- PASS: TestMigrationPopulateBirthdayBlock (0.01s)
+--- PASS: TestMigrationResetSyncedBlockToBirthdayWithNoBirthdayBlock (0.01s)
+--- PASS: TestMigrationPopulateBirthdayBlockEstimateTooFar (0.02s)
+--- PASS: TestMigrationResetSyncedBlockToBirthday (0.02s)
+PASS
+ok  	github.com/btcsuite/btcwallet/waddrmgr	0.043s

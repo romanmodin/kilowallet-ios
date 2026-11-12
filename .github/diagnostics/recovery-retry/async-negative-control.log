@@ -1,0 +1,6 @@
+=== RUN   TestKilowalletAsyncRecoveryRetry
+    kilowallet_sync_retry_test.go:137: retry did not reach rescan; possible repeated initial-sync write
+--- FAIL: TestKilowalletAsyncRecoveryRetry (12.08s)
+FAIL
+FAIL	github.com/btcsuite/btcwallet/wallet	12.087s
+FAIL

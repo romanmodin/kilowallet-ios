@@ -1,13 +1,17 @@
-name: LND engine (iOS)
+name: LND recovery candidate (unsigned iOS)
 
 # Builds Lndmobile.xcframework (device arm64 + simulator arm64/x86_64) from lnd-engine/ENGINE.
-# The binary is not kept in git: the app's workflow downloads this run's artifact and checks its
-# sha256 against ENGINE. Run it by hand after changing ENGINE, then write run= and sha256= there.
+# Diagnostic candidate only: tests and applies a pinned recovery patch.
+# App artifact pins stay unchanged until separate native/rendering qualification.
 
 on:
   workflow_dispatch:
-  push:
-    paths: [lnd-engine/build-ios.sh]
+
+permissions:
+  contents: read
+concurrency:
+  group: kilowallet-lnd-recovery-candidate
+  cancel-in-progress: false
 
 jobs:
   bind:
@@ -27,12 +31,21 @@ jobs:
           go-version: ${{ steps.pin.outputs.go }}
           cache: false
       - name: Build
-        run: ./lnd-engine/build-ios.sh
+        run: |
+          set -o pipefail
+          ./lnd-engine/build-ios.sh 2>&1 | tee lnd-candidate-build.log
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: Lndmobile-xcframework
+          name: Lndmobile-recovery-candidate
           path: |
             build/lnd/Lndmobile.xcframework.zip
             build/lnd/Lndmobile.xcframework.zip.sha256
+            build/lnd/candidate-native-receipt.json
+            build/lnd/candidate-tests.log
+            build/lnd/resolved-modules.txt
+            build/lnd/engine-module.diff
+            build/lnd/btcwallet-source.diff
+            lnd-candidate-build.log
           retention-days: 90
           compression-level: 0
