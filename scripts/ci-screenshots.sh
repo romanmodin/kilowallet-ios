@@ -140,6 +140,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
     pool-join) expected="Join" ;;
     pool-create|pool-create-v6) expected="Open a pool" ;;
     pool-pay) expected="Pay through a pool" ;;
+    receive) expected="Receive XBT" ;;
     receive@es) expected="Recibir" ;;
     settings@es) expected="Ajustes" ;;
     replace) expected="Cancel" ;;
