@@ -10,7 +10,7 @@ concurrency:
 jobs:
   frame:
     name: Exact-source synthetic LND frame recapture
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 110
     steps:
     - uses: actions/checkout@v4
