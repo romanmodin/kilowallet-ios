@@ -1,11 +1,11 @@
-name: Exact-source Receive capture diagnostic
+name: Exact-source App Store iPhone 16 capture
 'on':
   workflow_dispatch: null
 permissions:
   contents: read
   actions: read
 concurrency:
-  group: kilowallet-receive-capture-diagnostic
+  group: kilowallet-store-size-capture-20261114
   cancel-in-progress: false
 jobs:
   frame:

@@ -30,8 +30,9 @@ best = None
 for rt, devs in d.items():
     if "iOS" not in rt: continue
     for x in devs:
-        if x["name"].startswith("iPhone") and "Pro Max" not in x["name"] and "SE" not in x["name"]:
+        if x["name"] == "iPhone 16":
             best = (rt, x["name"], x["udid"])
+if best is None: raise SystemExit("Required iPhone 16 simulator unavailable; refuse wrong screenshot dimensions")
 print(best[2]); print(best[0], best[1], file=sys.stderr)
 ')
 echo "simulator: $UDID"
