@@ -30,9 +30,18 @@ best = None
 for rt, devs in d.items():
     if "iOS" not in rt: continue
     for x in devs:
-        if x["name"] == "iPhone 16":
+        if x["name"] in ("iPhone 16", "Kilowallet Store iPhone 16"):
             best = (rt, x["name"], x["udid"])
-if best is None: raise SystemExit("Required iPhone 16 simulator unavailable; refuse wrong screenshot dimensions")
+if best is None:
+    import subprocess,re
+    def simjson(kind):
+        return json.loads(subprocess.check_output(["xcrun","simctl","list",kind,"-j"]))[kind]
+    types=[x for x in simjson("devicetypes") if x["name"]=="iPhone 16"]
+    runtimes=[x for x in simjson("runtimes") if x.get("isAvailable") and x["name"].startswith("iOS ")]
+    if len(types)!=1 or not runtimes: raise SystemExit("Required iPhone 16 device type or available iOS runtime missing")
+    runtime=max(runtimes,key=lambda x:tuple(int(n) for n in re.findall(r"[0-9]+",x.get("version","0"))))
+    udid=subprocess.check_output(["xcrun","simctl","create","Kilowallet Store iPhone 16",types[0]["identifier"],runtime["identifier"]],text=True).strip()
+    best=(runtime["identifier"],"Kilowallet Store iPhone 16",udid)
 print(best[2]); print(best[0], best[1], file=sys.stderr)
 ')
 echo "simulator: $UDID"
