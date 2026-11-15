@@ -39,4 +39,28 @@ class CommitmentIntegrityTest {
         assertFails { store.markUsed(a) }
         assertFalse(store.isUsed(a))
     }
+    @Test fun backupRetryMustFlushEvenWhenCacheAlreadyContainsTheUnion() {
+        var disk = JsonCommitmentStore.format(listOf(a))
+        var cache = disk
+        var failFlush = true
+        var attempts = 0
+        val store = JsonCommitmentStore({ cache }, {
+            cache = it
+            attempts++
+            if (failFlush) error("disk failure")
+            disk = cache
+        })
+        val backup = JsonCommitmentStore.format(listOf(b))
+        assertFails { store.mergeFrom(backup) }
+        assertFails { store.mergeFrom(backup) }
+        assertEquals(2, attempts)
+        assertEquals(JsonCommitmentStore.format(listOf(a)), disk)
+        failFlush = false
+        store.mergeFrom(backup)
+        assertEquals(3, attempts)
+        val reopened = JsonCommitmentStore({ disk }, { disk = it })
+        assertTrue(reopened.isUsed(a))
+        assertTrue(reopened.isUsed(b))
+        assertEquals(2, reopened.count())
+    }
 }
