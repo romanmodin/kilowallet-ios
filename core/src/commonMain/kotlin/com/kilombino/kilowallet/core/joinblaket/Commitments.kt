@@ -3,7 +3,7 @@ package com.kilombino.kilowallet.core.joinblaket
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonPrimitive
+
 
 /**
  * The PoDLE commitments this wallet already showed to makers (`taker/podle_manager.py`). A
@@ -24,33 +24,44 @@ interface CommitmentStore {
  * [save] must keep it durably before returning (the app: its settings, written to disk at once).
  */
 class JsonCommitmentStore(private val load: () -> String?, private val save: (String) -> Unit) : CommitmentStore {
-    private fun read(): MutableSet<String> {
-        val text = load() ?: return LinkedHashSet()
-        val a = runCatching { JbJson.obj(text)["used"] as? JsonArray }.getOrNull() ?: return LinkedHashSet()
-        return a.mapNotNullTo(LinkedHashSet()) { (it as? JsonPrimitive)?.content?.lowercase() }
+    private fun parse(text: String): MutableSet<String> {
+        val a = JbJson.obj(text)["used"] as? JsonArray
+            ?: error("Invalid saved JoinBlaket commitment history.")
+        return a.mapTo(LinkedHashSet()) {
+            val value = it as? JsonPrimitive
+            require(value != null && value.isString) { "Invalid saved JoinBlaket commitment." }
+            normalize(value.content)
+        }
     }
 
-    override fun isUsed(commitmentHex: String): Boolean = commitmentHex.lowercase() in read()
+    private fun read(): MutableSet<String> = load()?.let(::parse) ?: LinkedHashSet()
+
+    private fun normalize(value: String): String {
+        require(value.matches(Regex("[a-fA-F0-9]{64}"))) { "Invalid JoinBlaket commitment." }
+        return value.lowercase()
+    }
+
+    override fun isUsed(commitmentHex: String): Boolean = normalize(commitmentHex) in read()
 
     override fun markUsed(commitmentHex: String) {
         val used = read()
-        if (!used.add(commitmentHex.lowercase())) return
+        used.add(normalize(commitmentHex))
+        // Retry persistence even if an earlier flush failed after updating an in-memory cache.
         save(format(used))
     }
 
     /** The JSON for a backup, or null when nothing was used yet. */
-    fun export(): String? = load()
+    fun export(): String? = load()?.also { parse(it) }
 
     /**
      * Adds the used commitments of a backup ([json], the same format) to these: a restore never
      * forgets one already used here, and never brings back an index the backup had burned.
      */
     fun mergeFrom(json: String) {
-        val a = JbJson.obj(json)["used"] as? JsonArray ?: return
+        // Validate the entire backup before any mutation; corrupt records must never reset history.
+        val imported = parse(json)
         val used = read()
-        var changed = false
-        for (e in a) { val h = e.jsonPrimitive.content.lowercase(); if (used.add(h)) changed = true }
-        if (changed) save(format(used))
+        if (used.addAll(imported)) save(format(used))
     }
 
     /** How many commitments were used: for tests and the backup summary. */
