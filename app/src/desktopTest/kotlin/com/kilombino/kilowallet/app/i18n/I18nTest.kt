@@ -200,6 +200,7 @@ class I18nTest {
         "export",
         "filters",
         "frozen.v1.",
+        "joinblaket.commitments.v1.", // Internal wallet-scoped storage key, never displayed.
         "github.com/romanmodin/kilowallet-ios",
         "history",
         "id",
