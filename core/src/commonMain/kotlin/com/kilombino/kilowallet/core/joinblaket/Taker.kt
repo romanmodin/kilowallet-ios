@@ -3,6 +3,7 @@ package com.kilombino.kilowallet.core.joinblaket
 import com.kilombino.kilowallet.core.crypto.Ec
 import com.kilombino.kilowallet.core.crypto.Hashes.toHex
 import com.kilombino.kilowallet.core.platform.ioDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -154,6 +155,7 @@ object TakerText {
     const val NO_FRESH_COMMITMENT = "Your coins that can open a CoinJoin have each been used for three already. Move one to a fresh address of yours and try again."
     const val NOT_ENOUGH_COINS = "Not enough coins: this CoinJoin needs up to {0} sats and your coins add up to {1} sats."
     const val FEE_CAP = "The mining fee with these makers would be above {0} sat/vB. Nothing was sent."
+    const val COMMITMENT_STORAGE = "The saved JoinBlaket commitment history could not be read or saved, so the CoinJoin was not started. Nothing was sent."
     const val CANCELLED = "Cancelled. Nothing was sent."
     const val NOT_CONFIRMED = "Not confirmed in time. Nothing was sent."
     const val TOO_FEW = "Too few makers answered ({0} of the {1} needed). Nothing was sent."
@@ -326,7 +328,22 @@ class TakerSession(
 
     /** The first commitment index of [coin] never shown to a maker, or null. */
     private fun freshIndex(coin: TakerCoin): Int? = (0 until config.utxoRetries).firstOrNull { i ->
-        !env.commitments.isUsed(Podle.generate(coin.privateKey, "${coin.txid.lowercase()}:${coin.vout}", i).commitment.toHex())
+        val hex = Podle.generate(coin.privateKey, "${coin.txid.lowercase()}:${coin.vout}", i).commitment.toHex()
+        !commitmentStorage("read") { env.commitments.isUsed(hex) }
+    }
+
+    /**
+     * Guards one commitment-store access. Every call site is before the commitment it concerns is
+     * revealed and before anything is signed or broadcast, so a failure here is definitely unsent.
+     * Coroutine cancellation is never converted; it propagates. This is deliberately not a catch
+     * around the session: failures after signing must not be reported as unsent.
+     */
+    private inline fun <T> commitmentStorage(op: String, block: () -> T): T = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        throw Abort(TakerResult.Failed(TakerText.COMMITMENT_STORAGE, "commitment history $op failed: ${e::class.simpleName}: ${e.message}"))
     }
 
     /**
@@ -338,7 +355,9 @@ class TakerSession(
         for (coin in eligible) {
             val i = freshIndex(coin) ?: continue
             val c = Podle.generate(coin.privateKey, "${coin.txid.lowercase()}:${coin.vout}", i)
-            env.commitments.markUsed(c.commitment.toHex())
+            val hex = c.commitment.toHex()
+            // Durable before the commitment is revealed; if it is not, nothing is revealed.
+            commitmentStorage("write") { env.commitments.markUsed(hex) }
             return Opening(coin, c)
         }
         return null

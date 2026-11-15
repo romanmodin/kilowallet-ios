@@ -128,14 +128,14 @@ class TakerSessionTest {
 
     private class Run(val result: TakerResult, val env: Env, val pushed: List<String>, val store: FileCommitmentStore, val coin: TakerCoin)
 
-    private fun run(chain: FakeChain, makers: List<FakeMaker>, n: Int, minimum: Int): Run {
+    private fun run(chain: FakeChain, makers: List<FakeMaker>, n: Int, minimum: Int, wrap: (FileCommitmentStore) -> CommitmentStore = { it }): Run {
         val k = key()
         val coin = TakerCoin(txid(), 1, 50_000_000, k, tip - 9)
         chain.utxos[coin.outpoint] = IoauthCheck.ChainUtxo(coin.value, coin.scriptPubKey, 10)
         val pushed = Collections.synchronizedList(ArrayList<String>())
         val store = FileCommitmentStore(File.createTempFile("cmt", ".json").apply { delete(); deleteOnExit() })
         directory(chain, makers, pushed).use { dir ->
-            val env = Env(chain, dir.port, store)
+            val env = Env(chain, dir.port, wrap(store))
             val r = runBlocking { TakerSession(env, config).run(TakerRequest(address(), 10_000_000, 2.0, listOf(coin), address(), n, minimum)) }
             dir.finish()
             return Run(r, env, pushed, store, coin)
@@ -190,6 +190,62 @@ class TakerSessionTest {
         assertTrue(r.pushed.isEmpty() && r.env.broadcasts.isEmpty())
         assertTrue("CollectingSignatures" in r.env.steps)
         assertFalse("Broadcasting" in r.env.steps)
+    }
+
+    /** A store whose reads or writes fail with the given throwable; counts calls. */
+    private class FailingStore(val inner: CommitmentStore, val failRead: Throwable? = null, val failWrite: Throwable? = null) : CommitmentStore {
+        var reads = 0; var writes = 0
+        override fun isUsed(commitmentHex: String): Boolean { reads++; failRead?.let { throw it }; return inner.isUsed(commitmentHex) }
+        override fun markUsed(commitmentHex: String) { writes++; failWrite?.let { throw it }; inner.markUsed(commitmentHex) }
+    }
+
+    private fun assertNothingRevealedSignedOrSent(r: Run, makers: List<FakeMaker>) {
+        assertTrue("no !fill (commitment) reached a maker", makers.all { it.fills.isEmpty() })
+        assertTrue("no !push", r.pushed.isEmpty())
+        assertTrue("no own broadcast", r.env.broadcasts.isEmpty())
+        assertFalse("never asked to sign", "CollectingSignatures" in r.env.steps)
+        assertFalse("never broadcasting", "Broadcasting" in r.env.steps)
+    }
+
+    /** Malformed saved history (parse error on read) is a typed Failed before any reveal. */
+    @Test fun corruptCommitmentHistoryFailsTypedBeforeAnyReveal() {
+        val chain = FakeChain()
+        val makers = listOf(FakeMaker(chain, 100_000))
+        var store: FailingStore? = null
+        val corrupt = JsonCommitmentStore(load = { """{"used":[42]}""" }, save = { error("must not write over corrupt history") })
+        val r = run(chain, makers, n = 1, minimum = 1) { FailingStore(corrupt).also { s -> store = s } }
+        val failed = r.result as TakerResult.Failed
+        assertEquals(TakerText.COMMITMENT_STORAGE, failed.reason)
+        assertTrue(store!!.reads >= 1 && store!!.writes == 0)
+        assertNothingRevealedSignedOrSent(r, makers)
+    }
+
+    /** A failed durable write (save/flush throws) is a typed Failed and the commitment is never revealed. */
+    @Test fun failedDurableCommitmentWriteFailsTypedBeforeAnyReveal() {
+        val chain = FakeChain()
+        val makers = listOf(FakeMaker(chain, 100_000))
+        var store: FailingStore? = null
+        val r = run(chain, makers, n = 1, minimum = 1) { FailingStore(it, failWrite = java.io.IOException("flush failed")).also { s -> store = s } }
+        val failed = r.result as TakerResult.Failed
+        assertEquals(TakerText.COMMITMENT_STORAGE, failed.reason)
+        assertEquals(1, store!!.writes)
+        assertNothingRevealedSignedOrSent(r, makers)
+    }
+
+    /** Coroutine cancellation from the store is never converted into a Failed result. */
+    @Test fun cancellationFromCommitmentStorePropagates() {
+        for (onWrite in listOf(false, true)) {
+            val chain = FakeChain()
+            val makers = listOf(FakeMaker(chain, 100_000))
+            val cancel = kotlinx.coroutines.CancellationException("cancelled")
+            val thrown = runCatching {
+                run(chain, makers, n = 1, minimum = 1) {
+                    if (onWrite) FailingStore(it, failWrite = cancel) else FailingStore(it, failRead = cancel)
+                }
+            }.exceptionOrNull()
+            assertTrue("cancellation propagated (onWrite=$onWrite): $thrown", thrown is kotlinx.coroutines.CancellationException)
+            assertTrue("no !fill reached a maker", makers.all { it.fills.isEmpty() })
+        }
     }
 
     @Test fun commitmentStoreKeepsPythonsFormat() {
