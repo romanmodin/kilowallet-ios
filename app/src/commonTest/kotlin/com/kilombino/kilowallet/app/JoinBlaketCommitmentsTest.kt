@@ -45,4 +45,34 @@ class JoinBlaketCommitmentsTest {
         a.markUsed("cc".repeat(32))
         assertEquals(1, p.flushes)
     }
+    @Test fun backupAdapterRejectsMalformedHistoryAndPropagatesFailedDurability() {
+        val p = Memory()
+        val key = Signer.accountZpub(words, "")
+        val parse = kotlinx.serialization.json.Json
+        assertFails { mergeJoinBlaketBackup(p, key, parse.parseToJsonElement("[]")) }
+        assertFails { mergeJoinBlaketBackup(p, key, parse.parseToJsonElement("{\"used\":[\"bad\"]}")) }
+        assertTrue(p.data.isEmpty())
+        val valid = parse.parseToJsonElement("{\"used\":[\"" + "aa".repeat(32) + "\"]}")
+        p.failFlush = true
+        assertFails { mergeJoinBlaketBackup(p, key, valid) }
+        assertFails { mergeJoinBlaketBackup(p, key, valid) }
+        p.failFlush = false
+        mergeJoinBlaketBackup(p, key, valid)
+        assertEquals(1, p.flushes)
+        assertEquals(1, walletJoinBlaketCommitments(p, key).count())
+    }
+
+    @Test fun legacyGlobalHistoryIsConservativelyImportedWithoutDeletingIt() {
+        val p = Memory()
+        val legacy = "{\"used\":[\"" + "dd".repeat(32) + "\"]}"
+        p.data["joinblaket.commitments"] = legacy
+        val x = Signer.accountZpub(words, "")
+        val y = Signer.accountZpub(words, "synthetic-second-wallet")
+        assertTrue(walletJoinBlaketCommitments(p, x).isUsed("dd".repeat(32)))
+        assertTrue(walletJoinBlaketCommitments(p, y).isUsed("dd".repeat(32)))
+        assertEquals(legacy, p.data["joinblaket.commitments"])
+        p.data["joinblaket.commitments"] = "broken"
+        assertFails { walletJoinBlaketCommitments(p, x) }
+    }
+
 }

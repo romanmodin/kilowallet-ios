@@ -137,6 +137,8 @@ private fun BtcTab(model: WalletModel, state: UiState, platform: AppPlatform) {
             Logo(40)
         }
         if (!hot) Explain("Watch-only: this wallet has no keys. A send is signed elsewhere (SeedSigner, Sparrow…) from a PSBT.")
+        // A JoinBlaket payment going (or just ended): where it is, and the way back to its screen.
+        if (hot) JoinBlaketBanner(model)
 
         LinkText(if (state.hideAmounts) "Show amounts" else "Hide amounts", color = TextSoft) { model.toggleHideAmounts() }
         Panel {

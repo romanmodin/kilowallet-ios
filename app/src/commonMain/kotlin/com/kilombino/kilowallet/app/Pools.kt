@@ -113,6 +113,10 @@ class PoolsModel(
     private val verifyCoins: suspend (List<SpendableUtxo>) -> Unit,
     private val onRoundDone: () -> Unit,
     private val checkPolicy: (List<String>) -> Unit = {},
+    /** Coins a JoinBlaket payment holds: not offered to a pool while it runs. */
+    private val externalLocked: () -> Set<String> = { emptySet() },
+    /** A JoinBlaket payment's change address: never handed to a seat. */
+    private val externalScripts: () -> Set<List<Byte>> = { emptySet() },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val prefs = platform.prefs
@@ -364,7 +368,7 @@ class PoolsModel(
 
     /** Confirmed coins not seated in another round, biggest first: of [type] only, or all with null. */
     suspend fun poolCoins(type: PoolType? = null): List<SpendableUtxo> {
-        val seated = waitingOutpoints().keys + lockedOutpoints()
+        val seated = waitingOutpoints().keys + lockedOutpoints() + externalLocked()
         val coins = gatherCoins().filter { it.height > 0 && "${it.txid}:${it.vout}" !in seated && (type == null || typeOf(it) == type) }
             .sortedByDescending { it.value }
         runCatching { learnPooled(coins) }
@@ -383,7 +387,7 @@ class PoolsModel(
         val rows = wallet().rows.filter { (it.type == ScriptType.P2TR) == (type == PoolType.P2TR) }
         addresses.observe(key, rows)
         val acct = account(zpub, type)
-        val held = reservedScripts()
+        val held = reservedScripts() + externalScripts()
         while (true) {
             val i = addresses.next(key, chain)
             addresses.checkAvailable(key, chain, i)
