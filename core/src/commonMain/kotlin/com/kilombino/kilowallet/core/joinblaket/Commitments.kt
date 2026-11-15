@@ -61,7 +61,9 @@ class JsonCommitmentStore(private val load: () -> String?, private val save: (St
         // Validate the entire backup before any mutation; corrupt records must never reset history.
         val imported = parse(json)
         val used = read()
-        if (used.addAll(imported)) save(format(used))
+        used.addAll(imported)
+        // A failed flush may have updated the cache: an unchanged union still needs persistence.
+        save(format(used))
     }
 
     /** How many commitments were used: for tests and the backup summary. */
