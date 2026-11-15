@@ -13,11 +13,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.net.InetAddress
-import java.net.ServerSocket
+import com.kilombino.kilowallet.core.HeaderVectors
+import com.kilombino.kilowallet.core.chain.LineTransport
+import com.kilombino.kilowallet.core.chain.TransportFactory
 
 /**
- * [ElectrumChainLookup] against an in-process plain-TCP Electrum server (Android's test; the iOS
+ * [ElectrumChainLookup] against a scripted Electrum transport (Android's test; the iOS
  * wallet has no node-by-RPC backend, so Android's RpcChainLookup and its test are not ported).
  */
 class ChainLookupTest {
@@ -35,46 +36,42 @@ class ChainLookupTest {
     private val tip = 962_000
     private val confHeight = 961_991
 
-    /** Answers the few calls the lookup makes; a TLS hello is hung up on, so the client falls back to plain TCP. */
-    private fun fakeElectrum(): ServerSocket {
-        val server = ServerSocket(0, 5, InetAddress.getByName("127.0.0.1"))
-        Thread {
-            while (!server.isClosed) {
-                val s = runCatching { server.accept() }.getOrNull() ?: break
-                Thread {
-                    s.use {
-                        val inp = s.getInputStream().buffered()
-                        inp.mark(1); if (inp.read() == 0x16) return@Thread; inp.reset()
-                        val out = s.getOutputStream()
-                        for (line in inp.bufferedReader().lineSequence()) {
-                            val req = JSONObject(line)
-                            val p = req.getJSONArray("params")
-                            val result: Any = when (req.getString("method")) {
-                                "server.version" -> JSONArray().put("Fake 1.0").put("1.4")
-                                "blockchain.headers.subscribe" -> JSONObject().put("height", tip).put("hex", "00".repeat(164))
-                                "blockchain.scripthash.listunspent" ->
-                                    if (p.getString(0) == Hashes.sha256(bond.scriptPubKey).reversedArray().toHex())
-                                        JSONArray().put(JSONObject().put("tx_hash", txid).put("tx_pos", 0).put("height", confHeight).put("value", inputs.getLong("utxo_value")))
-                                    else JSONArray()
-                                "blockchain.transaction.get" -> if (p.getString(0) == txid) rawTx else JSONObject.NULL
-                                "blockchain.block.header" -> "00".repeat(68) + Wire.le(inputs.getLong("confirmation_time"), 4).toHex() + "00".repeat(8)
-                                else -> JSONObject.NULL
-                            }
-                            val reply = if (result == JSONObject.NULL && req.getString("method") == "blockchain.transaction.get")
-                                JSONObject().put("id", req.get("id")).put("error", JSONObject().put("message", "unknown tx"))
-                            else JSONObject().put("id", req.get("id")).put("result", result)
-                            out.write((reply.toString() + "\n").toByteArray()); out.flush()
-                        }
-                    }
-                }.apply { isDaemon = true }.start()
-            }
-        }.apply { isDaemon = true }.start()
-        return server
+    /** Scripted transport: pin and TLS intent are asserted without opening a network socket. */
+    private fun fakeElectrum(): LineTransport = object : LineTransport {
+        override val fingerprint = "ab".repeat(32)
+        private var replyLine: String? = null
+        override fun writeLine(line: String) {
+    val req = JSONObject(line)
+    val p = req.getJSONArray("params")
+    val result: Any = when (req.getString("method")) {
+        "server.version" -> JSONArray().put("Fake 1.0").put("1.4")
+        "blockchain.headers.subscribe" -> JSONObject().put("height", tip).put("hex", HeaderVectors.HEADERS.first().third)
+        "blockchain.scripthash.listunspent" ->
+            if (p.getString(0) == Hashes.sha256(bond.scriptPubKey).reversedArray().toHex())
+                JSONArray().put(JSONObject().put("tx_hash", txid).put("tx_pos", 0).put("height", confHeight).put("value", inputs.getLong("utxo_value")))
+            else JSONArray()
+        "blockchain.transaction.get" -> if (p.getString(0) == txid) rawTx else JSONObject.NULL
+        "blockchain.block.header" -> "00".repeat(68) + Wire.le(inputs.getLong("confirmation_time"), 4).toHex() + "00".repeat(8)
+        else -> JSONObject.NULL
+    }
+    val reply = if (result == JSONObject.NULL && req.getString("method") == "blockchain.transaction.get")
+        JSONObject().put("id", req.get("id")).put("error", JSONObject().put("message", "unknown tx"))
+    else JSONObject().put("id", req.get("id")).put("result", result)
+            replyLine = reply.toString()
+        }
+        override fun readLine(): String? = replyLine.also { replyLine = null }
+        override fun close() { replyLine = null }
     }
 
     @Test fun electrumLookup() {
-        fakeElectrum().use { server ->
-            val client = ElectrumClient(NodeEndpoint("127.0.0.1", server.localPort, isCustom = true), null, com.kilombino.kilowallet.core.chain.JvmTransport)
+        run {
+            val server = fakeElectrum()
+            val client = ElectrumClient(NodeEndpoint("fixture.invalid", 50002, isCustom = true), server.fingerprint,
+                TransportFactory { _, _, tls, pin ->
+                    assertTrue(tls)
+                    assertEquals(server.fingerprint, pin)
+                    server
+                })
             client.connect()
             try {
                 val chain = ElectrumChainLookup(client)
