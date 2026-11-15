@@ -115,10 +115,19 @@ class TakerSessionTest {
 
     private class Env(override val chain: ChainLookup, private val port: Int, override val commitments: CommitmentStore) : TakerEnv {
         val broadcasts = ArrayList<String>()
+        var rejectSign = false
+        var rejectSave = false
+        var savedRaw: String? = null
+        override suspend fun beforeSign() { check(!rejectSign) { "policy changed" } }
+        override suspend fun beforeBroadcast(rawHex: String) {
+            check(!rejectSave) { "durable write failed" }
+            TxParse.parse(rawHex)
+            savedRaw = rawHex
+        }
         val steps = ArrayList<String>()
         override suspend fun directory(identity: NickIdentity) = DirectoryClient("127.0.0.1", port, identity, JbNetwork.REGTEST.wire, null,
             requireVerified = false, transport = PlainTcp, connectTimeoutMs = 5_000, peerlistTimeoutMs = 2_000, peerlistQuietMs = 200)
-        override fun broadcast(rawHex: String): String { broadcasts += rawHex; return "" }
+        override fun broadcast(rawHex: String): String { check(savedRaw == rawHex); broadcasts += rawHex; return "" }
         override suspend fun confirm(plan: TakerPlan) = true
         override fun progress(step: TakerStep) { steps += step::class.simpleName!! }
     }
@@ -128,7 +137,7 @@ class TakerSessionTest {
 
     private class Run(val result: TakerResult, val env: Env, val pushed: List<String>, val store: FileCommitmentStore, val coin: TakerCoin)
 
-    private fun run(chain: FakeChain, makers: List<FakeMaker>, n: Int, minimum: Int, wrap: (FileCommitmentStore) -> CommitmentStore = { it }): Run {
+    private fun run(chain: FakeChain, makers: List<FakeMaker>, n: Int, minimum: Int, fault: String? = null, wrap: (FileCommitmentStore) -> CommitmentStore = { it }): Run {
         val k = key()
         val coin = TakerCoin(txid(), 1, 50_000_000, k, tip - 9)
         chain.utxos[coin.outpoint] = IoauthCheck.ChainUtxo(coin.value, coin.scriptPubKey, 10)
@@ -136,7 +145,14 @@ class TakerSessionTest {
         val store = FileCommitmentStore(File.createTempFile("cmt", ".json").apply { delete(); deleteOnExit() })
         directory(chain, makers, pushed).use { dir ->
             val env = Env(chain, dir.port, wrap(store))
-            val r = runBlocking { TakerSession(env, config).run(TakerRequest(address(), 10_000_000, 2.0, listOf(coin), address(), n, minimum)) }
+            env.rejectSign = fault == "policy changed"
+            env.rejectSave = fault == "durable write failed"
+            val r = try {
+                runBlocking { TakerSession(env, config).run(TakerRequest(address(), 10_000_000, 2.0, listOf(coin), address(), n, minimum)) }
+            } catch (e: IllegalStateException) {
+                if (fault == null || e.message != fault) throw e
+                TakerResult.Failed(fault)
+            }
             dir.finish()
             return Run(r, env, pushed, store, coin)
         }
@@ -269,4 +285,33 @@ class TakerSessionTest {
         assertTrue(runCatching { JbNetwork.MAINNET.scriptPubKey(reg) }.isFailure)
         assertTrue(runCatching { JbNetwork.REGTEST.scriptPubKey(main) }.isFailure)
     }
+    @Test fun changedPolicyPreventsTakerSignaturesAndAllBroadcasts() {
+        val chain = FakeChain()
+        val r = run(chain, listOf(FakeMaker(chain, 100_000)), 1, 1, fault = "policy changed")
+        assertEquals("policy changed", (r.result as TakerResult.Failed).reason)
+        assertFalse(r.env.steps.contains("Broadcasting"))
+        assertTrue(r.pushed.isEmpty())
+        assertTrue(r.env.broadcasts.isEmpty())
+        assertEquals(null, r.env.savedRaw)
+    }
+
+    @Test fun failedDurableWritePreventsMakerAndBackendHandoff() {
+        val chain = FakeChain()
+        val r = run(chain, listOf(FakeMaker(chain, 100_000)), 1, 1, fault = "durable write failed")
+        assertEquals("durable write failed", (r.result as TakerResult.Failed).reason)
+        assertTrue(r.env.steps.contains("Broadcasting"))
+        assertTrue(r.pushed.isEmpty())
+        assertTrue(r.env.broadcasts.isEmpty())
+        assertEquals(null, r.env.savedRaw)
+    }
+
+    @Test fun exactSignedTransactionIsSavedBeforeNetworkHandoff() {
+        val chain = FakeChain()
+        val r = run(chain, listOf(FakeMaker(chain, 100_000)), 1, 1)
+        val sent = r.result as TakerResult.Sent
+        assertEquals(sent.rawHex, r.env.savedRaw)
+        assertEquals(sent.txid, TxParse.txid(TxParse.parse(r.env.savedRaw!!)))
+        assertTrue(r.pushed.all { Base64.getDecoder().decode(it).toHex() == r.env.savedRaw })
+    }
+
 }

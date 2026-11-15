@@ -27,9 +27,12 @@ final class ElectrumConnection: NSObject, IosConnection {
         get { stateLock.lock(); defer { stateLock.unlock() }; return closedStorage }
         set { stateLock.lock(); defer { stateLock.unlock() }; closedStorage = newValue }
     }
+    /// Zero disables the read deadline for the Tor directory.
+    private let readTimeout: Double
 
     /// [socksPort] > 0: through the app's Tor (TorProxy, iOS 17 or later), the name resolved by Tor.
-    init(host: String, port: Int32, tls: Bool, pinnedFingerprint: String?, socksPort: Int32 = 0) {
+    init(host: String, port: Int32, tls: Bool, pinnedFingerprint: String?, socksPort: Int32 = 0, readTimeout: Double = 90) {
+        self.readTimeout = readTimeout
         let tcp = NWProtocolTCP.Options()
         tcp.connectionTimeout = 20
         tcp.noDelay = true
@@ -121,7 +124,7 @@ final class ElectrumConnection: NSObject, IosConnection {
     }
 
     func readLine() -> String? {
-        let deadline = DispatchTime.now() + 90
+        let deadline: DispatchTime = readTimeout > 0 ? .now() + readTimeout : .distantFuture
         while true {
             if buffer.count > 4 * 1024 * 1024 || DispatchTime.now() >= deadline { close(); return nil }
             if let nl = buffer.firstIndex(of: 0x0A) {

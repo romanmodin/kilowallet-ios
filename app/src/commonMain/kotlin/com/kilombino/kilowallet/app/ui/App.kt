@@ -85,6 +85,7 @@ fun App(platform: AppPlatform, model: WalletModel = remember { WalletModel(platf
                         Screen.PoolCreate -> PoolCreateScreen(model, state)
                         is Screen.PoolJoin -> PoolJoinScreen(model, state, s.poolId)
                         Screen.PoolPay -> PoolPayScreen(model, state)
+                        Screen.JoinBlaket -> JoinBlaketScreen(model)
                     }
                 }
             }

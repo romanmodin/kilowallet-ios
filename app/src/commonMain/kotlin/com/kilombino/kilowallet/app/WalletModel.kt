@@ -75,6 +75,8 @@ sealed interface Screen {
     data object PoolPay : Screen
     /** The end of Tor's log, to read and copy (Android: SHOW TOR'S LOG). */
     data object TorLog : Screen
+    /** PAY THROUGH JOINBLAKET: the round going, its plan to confirm, its outcome. */
+    data object JoinBlaket : Screen
 }
 
 sealed interface ScanPhase {
@@ -197,7 +199,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     private var receiveSession: Pair<String, Int>? = null
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
-    fun close() { cancelAction(); pools.detach(); scope.cancel() }
+    fun close() { cancelAction(); joinBlaket.close(); pools.detach(); scope.cancel() }
 
     private var scanJob: Job? = null
     private var sendJob: Job? = null
@@ -217,6 +219,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
 
     /** Clear secret screens and invalidate outstanding unlock callbacks when backgrounded. */
     fun onBackground() {
+        joinBlaket.cancel()
         cancelAction()
         scanJob?.cancel()
         walletEpoch++
@@ -226,7 +229,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
 
 
     /** Kilojoin: the pools and this wallet's rounds in them. */
-    val pools = PoolsModel(platform, { _state.value },
+    val pools: PoolsModel = PoolsModel(platform, { _state.value },
         gatherCoins = {
             val s = _state.value; val zpub = s.zpub ?: error("No wallet.")
             require(pending(zpub) == null) { "Resolve the pending payment before joining a pool." }
@@ -243,7 +246,44 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             val zpub = state.value.zpub ?: error("No wallet.")
             require(pending(zpub) == null) { "Resolve the pending payment before using a pool." }
             require(ids.none { it in frozenStore.read(zpub) }) { "A pool input is frozen. Nothing was signed." }
+            require(ids.none { it in joinBlaket.lockedOutpoints() }) { "A pool input is in a JoinBlaket payment. Nothing was signed." }
+        },
+        externalLocked = { joinBlaket.lockedOutpoints() },
+        externalScripts = { joinBlaket.heldChangeScripts() })
+
+    /** PAY THROUGH JOINBLAKET (Android 1.6.0): this wallet as a JoinMarket taker, one payment at a time. */
+    val joinBlaket: JoinBlaketModel = JoinBlaketModel(platform, { _state.value },
+        gatherCoins = { s ->
+            val zpub = requireNotNull(s.zpub)
+            eligibleCoins(scanner.gatherUtxos(s.rows.filter { it.isUsed && (it.type == null || it.type == ScriptType.P2WPKH) }, s.endpoint, s.pinned),
+                frozenStore.read(zpub), s.selectedCoins)
+        },
+        verifyCoins = { s, coins -> scanner.verifyCoins(requireNotNull(s.zpub), coins, s.endpoint, s.pinned) },
+        heldByPools = { pools.lockedOutpoints() + pools.waitingOutpoints().keys },
+        poolScripts = { pools.reservedScripts() },
+        onSent = { refresh() },
+        walletEpoch = { walletEpoch },
+        checkPolicy = { s, ids ->
+            val zpub = requireNotNull(s.zpub)
+            require(pending(zpub) == null) { "Resolve the pending payment before using JoinBlaket." }
+            require(state.value.send is SendPhase.Editing) { "Finish or edit the other payment before using JoinBlaket." }
+            require(ids.none { it in frozenStore.read(zpub) }) { "A JoinBlaket input is frozen. Nothing was signed." }
+            require(s.selectedCoins == null || ids.all { it in s.selectedCoins }) { "A JoinBlaket input is not selected." }
+        },
+        persistSigned = { s, raw ->
+            val zpub = requireNotNull(s.zpub)
+            check(pending(zpub) == null) { "Resolve the pending payment first." }
+            TxParse.parse(raw) // Reject invalid bytes before recording a recoverable payment.
+            prefs.put(pendingKey(zpub), raw)
+            prefs.flush()
         })
+
+    /** Screenshot mode: what the send form starts with (address, amount). */
+    var demoSend: Pair<String, Long>? = null
+        private set
+
+    /** Coins a Kilojoin round past its waiting step or a JoinBlaket payment holds: a normal send leaves them alone. */
+    private fun heldOutpoints(): Set<String> = pools.lockedOutpoints() + joinBlaket.lockedOutpoints()
 
     /** The wallet's mined rewards still locked (shown under the balance), or null before they were looked up. */
     private val _immature = MutableStateFlow<Scanner.Immature?>(null)
@@ -607,9 +647,10 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     }
 
     private fun allowedCoins(s: UiState, coins: List<SpendableUtxo>): List<SpendableUtxo> {
+        require(!joinBlaket.running && !joinBlaket.preparing.value) { "Finish or cancel the JoinBlaket payment first." }
         // Read durable policy every time, including the final signing boundary.
         val frozen = frozenStore.read(requireNotNull(s.zpub))
-        return eligibleCoins(coins, frozen, s.selectedCoins).filter { it.coinId() !in pools.lockedOutpoints() }
+        return eligibleCoins(coins, frozen, s.selectedCoins).filter { it.coinId() !in heldOutpoints() }
     }
 
     fun availableCoins(): List<SpendableUtxo> = runCatching {
@@ -652,6 +693,10 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
     }
 
     private fun poolActionBlocked(): Boolean {
+        if (joinBlaket.running || joinBlaket.preparing.value) {
+            say("Finish or cancel the JoinBlaket payment before changing wallets, servers or making another payment.")
+            return true
+        }
         val active = pools.state.value
         if (active.busy != null || active.rounds.any { it.phase != com.kilombino.kilowallet.core.kilojoin.PoolSession.Phase.ABORTED &&
             it.phase != com.kilombino.kilowallet.core.kilojoin.PoolSession.Phase.CONFIRMED }) {
@@ -1110,7 +1155,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             val parsed = receiveAccount(s) ?: return null
             val pub = Bip32.derivePath(parsed, 0, index).pubkey()
             val address = Address.encode(pub, parsed.scriptType)
-            require(Address.scriptPubKey(pub, parsed.scriptType).toList() !in pools.reservedScripts()) { "Address progress changed. Refresh and try again." }
+            require(Address.scriptPubKey(pub, parsed.scriptType).toList() !in (pools.reservedScripts() + joinBlaket.heldChangeScripts())) { "Address progress changed. Refresh and try again." }
             if (cached == null) {
                 if (reuseLatest) say("Showing your latest unused address. 20 unused addresses are already reserved; refresh after a payment to create another.")
                 else addresses.reserve(zpub, 0, index)
@@ -1406,7 +1451,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 val index = addresses.next(key, 1)
                 addresses.checkAvailable(key, 1, index)
                 val spk = changeScript(s, index)
-                require(spk.toList() !in pools.reservedScripts()) { "Address progress changed. Refresh and try again." }
+                require(spk.toList() !in (pools.reservedScripts() + joinBlaket.heldChangeScripts())) { "Address progress changed. Refresh and try again." }
                 val d = withContext(cryptoDispatcher) { com.kilombino.kilowallet.core.wallet.CpfpPlanner.plan(txid, fee, vsize, ours, spk, rate) }
                 scanner.verifyCoins(zpub, d.inputs, s.endpoint, s.pinned, s.keyType, s.activeTaproot)
                 if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Review(d, SendPlanner.feeConcern(d), index)) }
@@ -1447,6 +1492,10 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             })
             // Lightning's birthday and channel backup, under Android's key (AppBackup "lightning").
             lightning.exportBackup()?.let { put("lightning", it) }
+            // JoinBlaket: PoDLE commitments already shown to makers, so a restored wallet never reuses one (Android 1.6.0).
+            s.zpub?.let { key -> walletJoinBlaketCommitments(prefs, key).export() }?.let {
+                put("joinblaket_commitments", kotlinx.serialization.json.Json.parseToJsonElement(it))
+            }
         }
     }
 
@@ -1509,9 +1558,17 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             runCatching { withContext(Dispatchers.Default) { com.kilombino.kilowallet.core.backup.Kab.decode(bytes, password) } }
                 .onSuccess { snap ->
                     if (!Bip39.isValid(snap.words)) { say("The words in this file are not a valid backup."); return@onSuccess }
-                    val id = withContext(cryptoDispatcher) { WalletCatalog.idFor(Signer.accountZpub(snap.words, snap.passphrase)) }
+                    val restoredKey = withContext(cryptoDispatcher) { Signer.accountZpub(snap.words, snap.passphrase) }
+                    val id = WalletCatalog.idFor(restoredKey)
                     if ((snap.hasArk || snap.app?.get("lightning") != null) && !nativeEngineLease.permits(id)) {
                         say("Close and reopen the app without another active node before restoring this backup."); return@onSuccess
+                    }
+                    // Validate and persist the union for the restored account BEFORE changing any wallet/seed.
+                    try {
+                        mergeJoinBlaketBackup(prefs, restoredKey, snap.app?.get("joinblaket_commitments"))
+                    } catch (e: Exception) {
+                        say("Could not restore JoinBlaket history. Existing wallets were kept. " + (e.message ?: ""))
+                        return@onSuccess
                     }
                     storeHot(snap.words, snap.passphrase) {
                         applySettings(snap.app)
@@ -1748,6 +1805,38 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         val frozen = frozenStore.set(zpub, coins.last().coinId(), true)
                         _state.update { it.copy(screen = Screen.Send, spendable = coins, frozenCoins = frozen, selectedCoins = setOf(coins.first().coinId())) }
                         platform.markReady(screen)
+                    }
+                    "jb-send", "jb-plan", "jb-progress", "jb-sent", "jb-failed" -> {
+                        // Made-up JoinBlaket figures (the market as start10's watcher publishes it, a plan, an outcome):
+                        // nothing is connected, unlocked or signed.
+                        val to = "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"
+                        val market = com.kilombino.kilowallet.core.joinblaket.JoinBlaketMarket.parse(com.kilombino.kilowallet.core.joinblaket.JoinBlaketMarket.SAMPLE)
+                        val plan = com.kilombino.kilowallet.core.joinblaket.TakerPlan(1_000_000, to,
+                            listOf(com.kilombino.kilowallet.core.joinblaket.TakerPlan.PlanMaker(20, 27_738),
+                                com.kilombino.kilowallet.core.joinblaket.TakerPlan.PlanMaker(300, 100)),
+                            1, 2_400_000, 2.17, 879, 2_349)
+                        val view = when (screen) {
+                            "jb-plan" -> JoinBlaketModel.View(1_000_000, to, com.kilombino.kilowallet.core.joinblaket.TakerStep.Confirm(plan), plan)
+                            "jb-progress" -> JoinBlaketModel.View(1_000_000, to, com.kilombino.kilowallet.core.joinblaket.TakerStep.WaitingForMakers(1, 2))
+                            "jb-sent" -> JoinBlaketModel.View(1_000_000, to, com.kilombino.kilowallet.core.joinblaket.TakerStep.Broadcasting, result =
+                                com.kilombino.kilowallet.core.joinblaket.TakerResult.Sent("6d".repeat(32), "", 2, 320, 879, 1_029, 1_399_701, viaMaker = true, seen = true))
+                            "jb-failed" -> JoinBlaketModel.View(1_000_000, to, com.kilombino.kilowallet.core.joinblaket.TakerStep.CheckingBonds(2), result =
+                                com.kilombino.kilowallet.core.joinblaket.TakerResult.Failed(com.kilombino.kilowallet.core.joinblaket.TakerText.fill(
+                                    com.kilombino.kilowallet.core.joinblaket.TakerText.NO_PODLE_COIN, 5, 200_000L)))
+                            else -> null
+                        }
+                        joinBlaket.setDemo(view, market)
+                        if (screen == "jb-send") { demoSend = to to 1_000_000L; go(Screen.Send) } else go(Screen.JoinBlaket)
+                        delay(1_500); platform.markReady(screen)
+                    }
+                    "jb-live" -> {
+                        // The real Tor, the real JoinBlaket directory (by its onion, nick authentication), the
+                        // orderbook as a watcher asks for it and the bonds valued on the wallet's server with SPV.
+                        // No keys: nothing is unlocked, signed or sent.
+                        launch {
+                            val line = joinBlaket.liveCheck()
+                            say(line); platform.markReady(screen)
+                        }
                     }
                     "dice" -> { go(Screen.Dice); platform.markReady(screen) }
                     "psbt" -> {

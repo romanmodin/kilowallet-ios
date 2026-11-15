@@ -138,8 +138,8 @@ private fun Busy(model: WalletModel, text: String, allowBack: Boolean = true) {
 private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) {
     val clipboard = LocalClipboardManager.current
     var paymentError by remember { mutableStateOf<String?>(null) }
-    var to by remember { mutableStateOf("") }
-    var amount by remember { mutableStateOf("") }
+    var to by remember { mutableStateOf(model.demoSend?.first ?: "") }
+    var amount by remember { mutableStateOf(model.demoSend?.second?.toString() ?: "") }
     var rate by remember { mutableStateOf("") }
     var recipients by remember { mutableStateOf(false) }
     var all by remember { mutableStateOf(false) }
@@ -201,6 +201,8 @@ private fun SendForm(model: WalletModel, state: UiState, platform: AppPlatform) 
         PrimaryButton("Review", Modifier.fillMaxWidth(), enabled = addrOk && (all || sats > 0) && state.coinPolicyError == null && model.availableCoins().isNotEmpty()) {
             model.prepareSend(to, sats, rateValue, all)
         }
+        // JoinBlaket (Android 1.6.0): the same payment as a JoinMarket taker, with bonded makers.
+        if (state.kind == com.kilombino.kilowallet.app.WalletKind.HOT && !all) JoinBlaketSendBlock(model, state, to, sats, rateValue)
         // Kilojoin: the same payment (and up to 4 more recipients) through a new pool.
         LinkText("or pay through a Kilojoin pool ›", color = Purple) {
             model.payThroughPool(if (to.isBlank() && sats == 0L) emptyList() else listOf(to to sats), rateValue)

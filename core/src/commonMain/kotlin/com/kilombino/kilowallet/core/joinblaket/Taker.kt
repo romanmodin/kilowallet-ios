@@ -141,6 +141,10 @@ interface TakerEnv {
     val commitments: CommitmentStore
     /** Show [plan] and wait for the user's answer: true to go on. */
     suspend fun confirm(plan: TakerPlan): Boolean
+    /** Revalidate app identity and coin policy immediately before using taker keys. */
+    suspend fun beforeSign() {}
+    /** Persist the exact signed transaction before its first network handoff. */
+    suspend fun beforeBroadcast(rawHex: String) {}
     fun progress(step: TakerStep) {}
     /** Diagnostics (nicks never go to the app's logs; tests print them). */
     fun log(line: String) {}
@@ -558,6 +562,7 @@ class TakerSession(
         }
 
         // Our own signatures, then every witness checked once more before anything is broadcast.
+        env.beforeSign()
         env.progress(TakerStep.Broadcasting)
         for ((i, owner) in unsigned.inputOwners.withIndex()) {
             if (owner != "taker") continue
@@ -577,6 +582,7 @@ class TakerSession(
         }
         val txid = unsigned.txid()
         val hex = signed.toHex()
+        env.beforeBroadcast(hex)
         val (viaMaker, seen) = broadcast(client, makers, signed, hex, txid, unsigned.outputs[0].scriptPubKey)
         if (!seen && !viaMaker) fail(TakerText.NOT_BROADCAST)
         return TakerResult.Sent(txid, hex, makers.size, makerFees, txFee, totalIn - totalOut, if (change > Fees.TAKER_DUST) change else 0,
