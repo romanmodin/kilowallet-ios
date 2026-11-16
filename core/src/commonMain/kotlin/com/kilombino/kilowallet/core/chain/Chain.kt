@@ -18,9 +18,10 @@ object Chain {
 }
 
 /** Where to reach the chain: the bundled default, or a server the user typed in. */
-data class NodeEndpoint(val host: String, val port: Int, val isCustom: Boolean = false) {
-    init { require(host.isNotBlank() && host.length <= 253 && host.none { it.isWhitespace() } && port in 1..65535) { "Invalid Electrum endpoint" } }
-    override fun toString() = "$host:$port"
+/** [rpc]: your own node by RPC instead of an Electrum server (Android 1.6.0's NodeEndpoint.rpc). */
+data class NodeEndpoint(val host: String, val port: Int, val isCustom: Boolean = false, val rpc: RpcNode? = null) {
+    init { require(rpc != null || (host.isNotBlank() && host.length <= 253 && host.none { it.isWhitespace() } && port in 1..65535)) { "Invalid Electrum endpoint" } }
+    override fun toString() = if (rpc != null) "your node (RPC)" else "$host:$port"
     companion object {
         val DEFAULT = NodeEndpoint(Chain.DEFAULT_HOST, Chain.DEFAULT_PORT, false)
     }

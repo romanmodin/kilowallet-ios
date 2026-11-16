@@ -429,6 +429,7 @@ class Scanner(
      * [SPV_FLOOR_BITS].
      */
     private fun spvCheck(client: ElectrumClient, txid: String, height: Int): Boolean? {
+        if (client.isOwnNode) return true // Explicitly selected own-node validation.
         val ok = runCatching {
             val header = BlockHeader.parse(client.blockHeader(height))
             val (branch, pos) = client.merkle(txid, height)

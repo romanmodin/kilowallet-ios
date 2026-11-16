@@ -2,6 +2,9 @@ package com.kilombino.kilowallet.app
 
 import com.kilombino.kilowallet.app.i18n.I18n
 import com.kilombino.kilowallet.core.chain.NodeEndpoint
+import com.kilombino.kilowallet.core.chain.NodeRpcBackend
+import com.kilombino.kilowallet.core.chain.RpcConn
+import com.kilombino.kilowallet.core.chain.RpcNode
 import com.kilombino.kilowallet.core.crypto.Address
 import com.kilombino.kilowallet.core.crypto.Bip32
 import com.kilombino.kilowallet.core.crypto.Bip39
@@ -309,7 +312,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             return
         }
         scope.launch {
-            runCatching { scanner.immature(rows, s.endpoint, s.pinned) }
+            runCatching { scanner.immature(rows, chainEp(s), chainPin(s)) }
                 .onSuccess { im -> if (sameWallet(s)) _immature.value = im }
                 .onFailure { immatureAsked = null }
         }
@@ -397,6 +400,9 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         const val K_GAP = "scan.gap"
         const val K_TOR_ONLY = "tor.only"
         const val K_TOR_ELECTRUM = "tor.electrum"
+        /** Your own node by RPC (Android 1.6.0): its connections (Keychain, they carry the password) and whether it is used. */
+        const val K_RPC = "rpc.conns"
+        const val K_RPC_ON = "rpc.on"
         const val K_MARKET = "market.json"
         const val K_MARKET_AT = "market.fetched"
         /** Screenshot mode's price: no network, the same figures every run. */
@@ -751,7 +757,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             _state.update { it.copy(send = SendPhase.Editing) }
             val s = _state.value
             if (platform.demoScreen == null) scope.launch {
-                val rate = scanner.suggestedFeeRate(s.endpoint, s.pinned)
+                val rate = scanner.suggestedFeeRate(chainEp(s), chainPin(s))
                 _state.update { it.copy(suggestedRate = rate) }
             }
         }
@@ -987,7 +993,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 _state.update { st -> st.copy(scan = ScanPhase.Error(it.message ?: "Invalid address progress"), refreshing = false) }
                 return@launch
             }
-            scanner.scan(zpub, s.endpoint, s.pinned, gap = s.gapLimit, type = s.keyType, taprootXpub = s.activeTaproot, knownReceiveCount = progress.receive,
+            scanner.scan(zpub, chainEp(s), chainPin(s), gap = s.gapLimit, type = s.keyType, taprootXpub = s.activeTaproot, knownReceiveCount = progress.receive,
                 knownChangeCount = progress.change).collect { ev ->
                 if (scanEpoch != walletEpoch) return@collect
                 if (ev is ScanEvent.Found) {
@@ -1041,7 +1047,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 _state.update { st -> st.copy(scan = ScanPhase.Error(it.message ?: "Invalid address progress"), refreshing = false) }
                 return@launch
             }
-            scanner.scan(zpub, s.endpoint, s.pinned, gap = s.gapLimit, type = s.keyType, taprootXpub = s.activeTaproot, knownReceiveCount = progress.receive,
+            scanner.scan(zpub, chainEp(s), chainPin(s), gap = s.gapLimit, type = s.keyType, taprootXpub = s.activeTaproot, knownReceiveCount = progress.receive,
                 knownChangeCount = progress.change).collect { ev ->
                 if (scanEpoch != walletEpoch) return@collect
                 if (ev is ScanEvent.Found) {
@@ -1115,6 +1121,59 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         if (_state.value.zpub != null) scan()
     }
 
+    // ------------------------------------------------------------------ your own node by RPC
+
+    private var rpcCache: List<RpcConn>? = null
+    /** The node's RPC connections, in the order they are tried (Android 1.6.0: Store.rpcConns). */
+    fun rpcConns(): List<RpcConn> = rpcCache ?: RpcConn.listFromJson(platform.secretGet(K_RPC)).also { rpcCache = it }
+    /** Read BTC from the node by RPC (true) or from the Electrum server (false). */
+    fun useRpc(): Boolean = prefs.get(K_RPC_ON) == "1" && rpcConns().isNotEmpty()
+
+    fun setRpcConns(list: List<RpcConn>) {
+        if (poolActionBlocked() || setupBusy || state.value.send is SendPhase.Signing || state.value.send is SendPhase.Pending) return
+        platform.secretPut(K_RPC, if (list.isEmpty()) null else RpcConn.listToJson(list))
+        rpcCache = list
+        resetChainSelection()
+        if (list.isEmpty()) prefs.put(K_RPC_ON, null)
+        if (_state.value.zpub != null) { _state.update { it.copy(rows = emptyList(), txs = emptyList()) }; scan() }
+    }
+
+    fun setUseRpc(on: Boolean) {
+        if (poolActionBlocked() || setupBusy || state.value.send is SendPhase.Signing || state.value.send is SendPhase.Pending) return
+        resetChainSelection()
+        prefs.put(K_RPC_ON, if (on && rpcConns().isNotEmpty()) "1" else null)
+        if (_state.value.zpub != null) { _state.update { it.copy(rows = emptyList(), txs = emptyList()) }; scan() }
+    }
+
+    private fun resetChainSelection() {
+        cancelAction(); scanJob?.cancel(); walletEpoch++
+        _state.update { it.copy(rows = emptyList(), txs = emptyList(), lastSyncedAt = null,
+            spendable = null, selectedCoins = null, send = SendPhase.Editing) }
+    }
+
+    /** Logs in to [c] and says what is there, or why not (a tick or a cross first). */
+    suspend fun testRpc(c: RpcConn): String = withContext(Dispatchers.Default) {
+        runCatching { NodeRpcBackend.test(c, platform.transports) }.fold({ "✓ $it" }, { "✗ " + (it.message ?: "no answer") })
+    }
+
+    /** The certificate an https node shows (TLS handshake only, nothing sent), for the user to compare. */
+    suspend fun probeRpcCertificate(c: RpcConn): Result<String> = withContext(Dispatchers.Default) {
+        runCatching { NodeRpcBackend.probeCertificate(c, platform.transports) }
+    }
+
+    /**
+     * Where the wallet reads the chain and sends: the user's node by RPC when it is on (the
+     * account's key gets a watch-only wallet there), else the Electrum server. Kilojoin and
+     * JoinBlaket keep the Electrum server: they ask about other people's coins and need merkle proofs.
+     */
+    private fun chainEp(s: UiState): NodeEndpoint {
+        val key = s.zpub ?: return s.endpoint
+        if (!useRpc()) return s.endpoint
+        val type = s.keyType ?: runCatching { Bip32.parseExtendedPubKey(key).scriptType }.getOrDefault(ScriptType.P2WPKH)
+        return NodeEndpoint("node", 0, isCustom = true, rpc = RpcNode(rpcConns(), key, type))
+    }
+    private fun chainPin(s: UiState): String? = if (useRpc() && s.zpub != null) null else s.pinned
+
     fun setServer(host: String, port: Int?) {
         if (poolActionBlocked()) return
         if (setupBusy || state.value.send is SendPhase.Signing) return
@@ -1174,11 +1233,11 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         s.zpub?.let(::loadFrozen)
         _state.update { it.copy(send = SendPhase.Editing, spendable = null, selectedCoins = null) }
         scope.launch {
-            val rate = scanner.suggestedFeeRate(s.endpoint, s.pinned)
+            val rate = scanner.suggestedFeeRate(chainEp(s), chainPin(s))
             if (isCurrent(epoch, s)) _state.update { it.copy(suggestedRate = rate) }
         }
         scope.launch {
-            runCatching { scanner.gatherUtxos(s.rows.filter { it.isUsed }, s.endpoint, s.pinned) }
+            runCatching { scanner.gatherUtxos(s.rows.filter { it.isUsed }, chainEp(s), chainPin(s)) }
                 .onSuccess { u -> if (isCurrent(epoch, s)) _state.update { it.copy(spendable = u) } }
                 .onFailure { if (isCurrent(epoch, s)) say("Could not load coins: ${it.message}") }
         }
@@ -1196,13 +1255,13 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         _state.update { it.copy(send = SendPhase.Preparing) }
         sendJob = scope.launch {
             runCatching {
-                val utxos = allowedCoins(s, s.spendable ?: scanner.gatherUtxos(s.rows.filter { it.isUsed }, s.endpoint, s.pinned)).map { if (s.kind == WalletKind.WATCH) it.copy(type = s.scriptType) else it }
+                val utxos = allowedCoins(s, s.spendable ?: scanner.gatherUtxos(s.rows.filter { it.isUsed }, chainEp(s), chainPin(s))).map { if (s.kind == WalletKind.WATCH) it.copy(type = s.scriptType) else it }
                 addresses.observe(receivingKey(s), receiveRows(s))
                 val changeIndex = addresses.next(receivingKey(s), 1)
                 val draft = withContext(cryptoDispatcher) {
                     SendPlanner.plan(to, amountSats, rate, utxos, changeScript(s, changeIndex), sendAll, useAllInputs = s.selectedCoins != null)
                 }
-                scanner.verifyCoins(zpub, draft.inputs, s.endpoint, s.pinned, s.keyType, s.activeTaproot)
+                scanner.verifyCoins(zpub, draft.inputs, chainEp(s), chainPin(s), s.keyType, s.activeTaproot)
                 if (draft.change > 0) addresses.checkAvailable(receivingKey(s), 1, changeIndex)
                 draft to changeIndex.takeIf { draft.change > 0 }
             }.onSuccess { (d, index) -> if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Review(d, SendPlanner.feeConcern(d), index)) } }
@@ -1269,7 +1328,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 require(allowedCoins(s, p.draft.inputs).size == p.draft.inputs.size) { "A reviewed coin is frozen. Edit the payment." }
                 p.changeIndex?.let { addresses.reserve(receivingKey(s), 1, it) }
                 prefs.put(pendingKey(zpub), tx.rawHex)
-                val id = scanner.broadcast(tx.rawHex, s.endpoint, s.pinned)
+                val id = scanner.broadcast(tx.rawHex, chainEp(s), chainPin(s))
                 prefs.put(pendingKey(zpub), null)
                 if (isCurrent(epoch, s)) { _state.update { it.copy(send = SendPhase.Sent(id)) }; refresh() }
             } catch (e: CancellationException) { throw e }
@@ -1344,7 +1403,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     // must not invite a second, different payment.
                     review.changeIndex?.let { addresses.reserve(receivingKey(s), 1, it) }
                     prefs.put(pendingKey(zpub), signed.rawHex)
-                    val txid = scanner.broadcast(signed.rawHex, s.endpoint, s.pinned)
+                    val txid = scanner.broadcast(signed.rawHex, chainEp(s), chainPin(s))
                     prefs.put(pendingKey(zpub), null)
                     if (isCurrent(epoch, s)) {
                         pools.leaveFor(draft.inputs.map { it.coinId() })
@@ -1370,7 +1429,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         _state.update { it.copy(send = SendPhase.Signing) }
         sendJob = scope.launch {
             try {
-                val id = scanner.resolveBroadcast(raw, s.endpoint, s.pinned)
+                val id = scanner.resolveBroadcast(raw, chainEp(s), chainPin(s))
                 prefs.put(pendingKey(zpub), null)
                 if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Sent(id)) }
                 refresh()
@@ -1409,7 +1468,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         _state.update { it.copy(send = SendPhase.Preparing) }
         sendJob = scope.launch {
             try {
-                val (tx, coins) = scanner.replacementCoins(txid, s.rows, s.endpoint, s.pinned)
+                val (tx, coins) = scanner.replacementCoins(txid, s.rows, chainEp(s), chainPin(s))
                 require(allowedCoins(s, coins).size == coins.size) { "A replacement input is frozen or reserved." }
                 addresses.observe(receivingKey(s), receiveRows(s))
                 val index = addresses.next(receivingKey(s), 1)
@@ -1419,7 +1478,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         Address.electrumScriptHash(spk) in s.rows.filter { it.chainIndex == 1 }.map { it.scriptHash }.toSet()
                     }, rate)
                 }
-                scanner.verifyCoins(zpub, d.inputs, s.endpoint, s.pinned, s.keyType, s.activeTaproot)
+                scanner.verifyCoins(zpub, d.inputs, chainEp(s), chainPin(s), s.keyType, s.activeTaproot)
                 if (cancel) addresses.checkAvailable(receivingKey(s), 1, index)
                 if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Review(d, SendPlanner.feeConcern(d), index.takeIf { cancel })) }
             } catch (e: CancellationException) { throw e }
@@ -1443,7 +1502,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         _state.update { it.copy(send = SendPhase.Preparing) }
         sendJob = scope.launch {
             try {
-                val (fee, vsize, ours) = scanner.cpfpParent(txid, s.rows, s.endpoint, s.pinned)
+                val (fee, vsize, ours) = scanner.cpfpParent(txid, s.rows, chainEp(s), chainPin(s))
                 if (!isCurrent(epoch, s)) return@launch
                 require(allowedCoins(s, ours).size == ours.size) { "A reviewed coin is frozen. Edit the payment." }
                 val key = receivingKey(s)
@@ -1453,7 +1512,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                 val spk = changeScript(s, index)
                 require(spk.toList() !in (pools.reservedScripts() + joinBlaket.heldChangeScripts())) { "Address progress changed. Refresh and try again." }
                 val d = withContext(cryptoDispatcher) { com.kilombino.kilowallet.core.wallet.CpfpPlanner.plan(txid, fee, vsize, ours, spk, rate) }
-                scanner.verifyCoins(zpub, d.inputs, s.endpoint, s.pinned, s.keyType, s.activeTaproot)
+                scanner.verifyCoins(zpub, d.inputs, chainEp(s), chainPin(s), s.keyType, s.activeTaproot)
                 if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Review(d, SendPlanner.feeConcern(d), index)) }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { if (isCurrent(epoch, s)) _state.update { it.copy(send = SendPhase.Failed(e.message ?: "Could not prepare the speed-up.")) } }

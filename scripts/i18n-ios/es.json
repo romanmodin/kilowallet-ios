@@ -791,5 +791,7 @@
   "Could not restore JoinBlaket history. Existing wallets were kept. ": "No se pudo restaurar el historial de JoinBlaket. Se han conservado los monederos existentes. ",
   "Check this payment before making another one. If needed, Kilowallet will resend the same transaction.": "Comprueba este pago antes de realizar otro. Si es necesario, Kilowallet reenviará la misma transacción.",
   "CHECK PAYMENT": "COMPROBAR PAGO",
-  "The saved JoinBlaket commitment history could not be read or saved. Nothing was signed or sent.": "No se pudo leer o guardar el historial de compromisos de JoinBlaket. No se ha firmado ni enviado nada."
+  "The saved JoinBlaket commitment history could not be read or saved. Nothing was signed or sent.": "No se pudo leer o guardar el historial de compromisos de JoinBlaket. No se ha firmado ni enviado nada.",
+  "added": "añadido",
+  "testing…": "probando…"
 }

@@ -53,6 +53,10 @@ class ElectrumClient(
 
     private var conn: LineTransport? = null
     private var nextId = 0
+    /** Your own node by RPC (Android 1.6.0): it answers instead of an Electrum server. */
+    private val node: NodeRpcBackend? = endpoint.rpc?.let { NodeRpcBackend(it, transports) }
+    /** Answers come from the user's own node, which validated every block itself (no SPV needed). */
+    val isOwnNode: Boolean get() = node != null
 
     /** SHA-256 fingerprint of the certificate this connection presented (null on plain TCP). */
     var serverFingerprint: String? = null
@@ -84,6 +88,7 @@ class ElectrumClient(
 
     fun connect() {
         close()
+        node?.let { it.connect(); serverVersion = it.version; return }
         val c = try {
             transports.open(endpoint.host, endpoint.port, tls = true, pinnedFingerprint = pinnedFingerprint)
         } catch (e: CertificateChangedException) {
@@ -159,6 +164,7 @@ class ElectrumClient(
     }
 
     fun blockHeight(): Int {
+        node?.let { return it.blockHeight() }
         val r = call("blockchain.headers.subscribe", JsonArray(emptyList())) as? JsonObject
             ?: throw ElectrumException("unexpected response from headers.subscribe")
         return r["height"]!!.jsonPrimitive.int.also { require(it in 0..10_000_000) { "Invalid block height" } }
@@ -166,12 +172,14 @@ class ElectrumClient(
 
     /** The tip header's hex, to check this server really follows the BLAKE2b chain (164-byte headers). */
     fun tipHeaderHex(): String {
+        node?.let { return it.blockHeader(it.blockHeight()) }
         val r = call("blockchain.headers.subscribe", JsonArray(emptyList())) as? JsonObject
             ?: throw ElectrumException("unexpected response from headers.subscribe")
         return r["hex"]?.jsonPrimitive?.contentOrNull.orEmpty()
     }
 
     fun balance(scriptHash: String): ScriptHashBalance {
+        node?.let { return it.balance(scriptHash) }
         val r = call("blockchain.scripthash.get_balance", params(scriptHash)) as? JsonObject
             ?: throw ElectrumException("unexpected response from get_balance")
         return ScriptHashBalance(
@@ -180,7 +188,7 @@ class ElectrumClient(
     }
 
     /** The Electrum status of a scripthash: a hash of its whole history, or null when it has none. */
-    fun status(scriptHash: String): String? =
+    fun status(scriptHash: String): String? = if (node != null) node.status(scriptHash) else
         (call("blockchain.scripthash.subscribe", params(scriptHash)) as? JsonPrimitive)?.contentOrNull
 
     /**
@@ -189,13 +197,13 @@ class ElectrumClient(
      * batch instead of one per address.
      */
     fun statuses(scriptHashes: List<String>): List<String?> {
-        if (scriptHashes.size <= 1) return scriptHashes.map { status(it) }
+        if (node != null || scriptHashes.size <= 1) return scriptHashes.map { status(it) }
         return batch("blockchain.scripthash.subscribe", scriptHashes).map { (it as? JsonPrimitive)?.contentOrNull }
     }
 
     /** [listUnspent] of many scripthashes, batched like [statuses] (Android app: `listUnspentMany`). */
     fun listUnspentMany(scriptHashes: List<String>): List<List<Utxo>> {
-        if (scriptHashes.size <= 1) return scriptHashes.map { listUnspent(it) }
+        if (node != null || scriptHashes.size <= 1) return scriptHashes.map { listUnspent(it) }
         return batch("blockchain.scripthash.listunspent", scriptHashes).map { utxos(it as? JsonArray) }
     }
 
@@ -251,6 +259,7 @@ class ElectrumClient(
     data class HistoryItem(val txid: String, val height: Int)
 
     fun history(scriptHash: String): List<HistoryItem> {
+        node?.let { return it.history(scriptHash) }
         val r = call("blockchain.scripthash.get_history", params(scriptHash)) as? JsonArray ?: return emptyList()
         return r.map {
             val o = it.jsonObject
@@ -260,7 +269,7 @@ class ElectrumClient(
 
     data class Utxo(val txid: String, val vout: Int, val value: Long, val height: Int)
 
-    fun listUnspent(scriptHash: String): List<Utxo> =
+    fun listUnspent(scriptHash: String): List<Utxo> = if (node != null) node.listUnspent(scriptHash) else
         utxos(call("blockchain.scripthash.listunspent", params(scriptHash)) as? JsonArray)
 
     private fun utxos(r: JsonArray?): List<Utxo> = r?.map {
@@ -270,11 +279,12 @@ class ElectrumClient(
     } ?: emptyList()
 
     /** Estimated fee to confirm within [blocks], in BTC/kB; -1 when the server has no estimate. */
-    fun estimateFeePerKb(blocks: Int): Double =
+    fun estimateFeePerKb(blocks: Int): Double = if (node != null) node.estimateFeePerKb(blocks) else
         (call("blockchain.estimatefee", params(blocks)) as? JsonPrimitive)?.doubleOrNull ?: -1.0
 
     /** The server's minimum relay fee, in BTC/kB. */
     fun relayFeePerKb(): Double {
+        node?.let { return it.relayFeePerKb() }
         if (protocolAtLeast("1.6")) {
             // blockchain.relayfee is gone in 1.6; mempool.get_info carries the same number.
             val info = call("mempool.get_info", JsonArray(emptyList())) as? JsonObject
@@ -287,6 +297,7 @@ class ElectrumClient(
 
     /** The raw (hex) transaction for [txid]; it must hash to [txid] or it is refused. */
     fun transaction(txid: String): String {
+        node?.let { return it.transaction(txid) }
         val raw = (call("blockchain.transaction.get", params(txid, false)) as? JsonPrimitive)?.contentOrNull
             ?: throw ElectrumException("unknown transaction $txid")
         val got = runCatching { TxParse.txid(TxParse.parse(raw)) }.getOrNull()
@@ -296,18 +307,24 @@ class ElectrumClient(
 
     /** Electrum's merkle branch for [txid] in block [height]: (branch hashes, position). */
     fun merkle(txid: String, height: Int): Pair<List<String>, Int> {
+        if (node != null) throw ElectrumException("no merkle proofs from a node")
         val o = call("blockchain.transaction.get_merkle", params(txid, height)) as? JsonObject
             ?: throw ElectrumException("no merkle proof for $txid")
         return o["merkle"]!!.jsonArray.map { it.jsonPrimitive.content } to o["pos"]!!.jsonPrimitive.int
     }
 
-    fun blockHeader(height: Int): String =
+    fun blockHeader(height: Int): String = if (node != null) node.blockHeader(height) else
         (call("blockchain.block.header", params(height)) as? JsonPrimitive)?.contentOrNull
             ?: throw ElectrumException("no header for block $height")
 
     /** Broadcast a raw (hex) transaction. Returns the txid, or throws with the server's reason. */
     fun broadcast(rawTxHex: String): String {
         val expected = TxParse.txid(TxParse.parse(rawTxHex))
+        node?.let {
+            val actual = it.broadcast(rawTxHex)
+            require(actual.equals(expected, ignoreCase = true)) { "Node returned a different transaction ID" }
+            return expected
+        }
         val txid = (call("blockchain.transaction.broadcast", params(rawTxHex)) as? JsonPrimitive)?.contentOrNull
         if (!expected.equals(txid, ignoreCase = true)) throw ElectrumException("Broadcast receipt did not match $expected. Delivery is uncertain; check this transaction before retrying.")
         return expected
