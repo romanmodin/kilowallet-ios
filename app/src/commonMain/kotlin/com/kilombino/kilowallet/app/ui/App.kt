@@ -22,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.kilombino.kilowallet.app.AppPlatform
 import com.kilombino.kilowallet.app.Screen
+import com.kilombino.kilowallet.app.Tab
+import com.kilombino.kilowallet.app.LightningModel
 import com.kilombino.kilowallet.app.WalletModel
 import com.kilombino.kilowallet.app.i18n.I18n
 import com.kilombino.kilowallet.app.i18n.phoneLanguages
@@ -55,6 +57,19 @@ fun App(platform: AppPlatform, model: WalletModel = remember { WalletModel(platf
             withFrameNanos { }
             withFrameNanos { }
             platform.markReady("restore")
+        }
+    }
+
+    if (demo == "ln-starting") {
+        val status by model.lightning.status.collectAsState()
+        if (state.screen == Screen.Home && state.tab == Tab.LIGHTNING && status is LightningModel.Status.Starting) {
+            LaunchedEffect(state.screen, state.tab, status) {
+                // Diagnostic frame evidence, distinct from the model-state marker.
+                withFrameNanos { }
+                withFrameNanos { }
+                println("KW ln-starting: target composed after two frames")
+                platform.markReady("frame-ln-starting")
+            }
         }
     }
 

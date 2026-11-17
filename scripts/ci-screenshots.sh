@@ -71,7 +71,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
   xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
   DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" data)
   mkdir -p "$DATA/Documents"
-  rm -f "$DATA/Documents/kw-ready-$base" "$DATA/Documents/kw-demo-selected" "$DATA/Documents/kw-ready-ui-$screen"
+  rm -f "$DATA/Documents/kw-ready-$base" "$DATA/Documents/kw-demo-selected" "$DATA/Documents/kw-ready-ui-$screen" "$DATA/Documents/kw-ready-frame-$base"
   printf %s "$screen" > "$DATA/Documents/kw-demo-case"
   # Let simctl finish launching before polling, without attaching a terminal whose
   # teardown can race the following launch. Keep each app's own stdout/stderr.
@@ -132,12 +132,26 @@ for screen in welcome history create restore watch home simple lightning ln-star
     capture_failure_diagnostics readiness
     exit 1
   fi
+  # Distinguish model readiness from target recomposition on the startup fixture.
+  if [ "$base" = ln-starting ]; then
+    for frame in $(seq 1 120); do
+      [ -f "$DATA/Documents/kw-ready-frame-$base" ] && break
+      sleep 1
+    done
+    if [ ! -f "$DATA/Documents/kw-ready-frame-$base" ]; then
+      echo "$screen: target frame marker missing"
+      capture_failure_diagnostics target-frame
+      exit 1
+    fi
+    echo "$screen: target frame marker after ${frame} polls"
+  fi
   sleep 3
   SHOT="$OUT/$(printf %02d $n)-$name.png"
   xcrun simctl io "$UDID" screenshot "$SHOT"
   expected=""
   case "$screen" in
     welcome) expected="Restore from words" ;;
+    ln-starting) expected="catching up with the chain" ;;
     rpc-settings) expected="Or your own node by RPC" ;;
     rpc-cert) expected="Is this your node" ;;
     rpc-error) expected="Plain http only" ;;
@@ -173,6 +187,12 @@ for screen in welcome history create restore watch home simple lightning ln-star
     rendered=false
     for attempt in 1 2 3; do
       if "$CHECKER" "${check_args[@]}"; then rendered=true; break; fi
+      cp "$SHOT" "$OUT/$name-ocr-attempt-$attempt.png"
+      if [ "$base" = ln-starting ]; then
+        # Process inventory is diagnostic evidence, not proof of foreground state.
+        xcrun simctl spawn "$UDID" launchctl list | grep -i Kilowallet > "screenshots-logs/$name.process-$attempt" || true
+        xcrun simctl launch "$UDID" "$BUNDLE" | tee -a "screenshots-logs/$name.foreground"
+      fi
       sleep 3
       xcrun simctl io "$UDID" screenshot "$SHOT"
     done
