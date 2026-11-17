@@ -148,6 +148,30 @@ final class ElectrumConnection: NSObject, IosConnection {
         }
     }
 
+    func readBytesHex(maxBytes: Int32) -> String? {
+        guard maxBytes > 0 && maxBytes <= 65536 else { return nil }
+        let deadline: DispatchTime = readTimeout > 0 ? .now() + readTimeout : .distantFuture
+        while buffer.isEmpty {
+            if closed { return nil }
+            let got = DispatchSemaphore(value: 0)
+            var chunk: Data?
+            var finished = false
+            conn.receive(minimumIncompleteLength: 1, maximumLength: Int(maxBytes)) { data, _, complete, e in
+                chunk = data
+                finished = complete || e != nil
+                got.signal()
+            }
+            if got.wait(timeout: deadline) == .timedOut { close(); return nil }
+            if let c = chunk { buffer.append(c) }
+            if finished { closed = true }
+        }
+        let count = min(Int(maxBytes), buffer.count)
+        let data = buffer.prefix(count)
+        let hex = data.map { String(format: "%02x", $0) }.joined()
+        buffer.removeFirst(count)
+        return hex
+    }
+
     func close() {
         closed = true
         conn.cancel()

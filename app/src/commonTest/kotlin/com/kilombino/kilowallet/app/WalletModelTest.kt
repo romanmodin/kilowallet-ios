@@ -169,6 +169,32 @@ class WalletModelTest {
         } finally { upgraded.close(); advanceUntilIdle() }
     }
 
+    @Test fun rpcSettingsCannotChangeDuringSigning() = checkModel { model, p ->
+        model.setUpDemo("review"); advanceUntilIdle()
+        model.confirmSend()
+        val before = p.values.toMap()
+        model.setRpcConns(listOf(RpcConn.parse("http://test:synthetic@192.168.1.20:8332")))
+        model.setUseRpc(true)
+        assertEquals(before, p.values)
+        assertTrue(model.rpcConns().isEmpty())
+        assertFalse(model.useRpc())
+        assertIs<SendPhase.Signing>(model.state.value.send)
+        assertTrue(p.sent.isEmpty())
+    }
+
+    @Test fun rpcSettingsInvalidateReviewedCoinsWithoutChangingWalletIdentity() = checkModel { model, p ->
+        model.setUpDemo("review"); advanceUntilIdle()
+        val identity = model.state.value.zpub
+        val secrets = p.secrets.toMap()
+        model.setRpcConns(listOf(RpcConn.parse("http://test:synthetic@192.168.1.20:8332")))
+        assertIs<SendPhase.Editing>(model.state.value.send)
+        assertNull(model.state.value.spendable)
+        assertEquals(identity, model.state.value.zpub)
+        assertEquals(secrets, p.secrets)
+        assertEquals(0, p.loadCalls)
+        assertTrue(p.sent.isEmpty())
+    }
+
     @Test fun rapidConfirmOnlyPromptsOnceAndBackgroundInvalidatesUnlock() = checkModel { model, p ->
         model.setUpDemo("review"); advanceUntilIdle()
         assertIs<SendPhase.Review>(model.state.value.send)
@@ -259,6 +285,12 @@ class WalletModelTest {
         advanceUntilIdle()
         assertIs<SendPhase.Pending>(model.state.value.send)
         assertEquals(1, p.sent.size)
+        val beforeRpcChange = p.values.toMap()
+        model.setRpcConns(listOf(RpcConn.parse("http://test:synthetic@192.168.1.20:8332")))
+        model.setUseRpc(true)
+        assertEquals(beforeRpcChange, p.values)
+        assertTrue(model.rpcConns().isEmpty())
+        assertIs<SendPhase.Pending>(model.state.value.send)
         val original = p.sent.single()
         val identity = model.state.value.zpub!!
         assertEquals(1, AddressBook(p.prefs).next(identity, 1))
