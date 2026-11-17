@@ -154,6 +154,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
     wallets) expected="Wallets" ;;
     history) expected="Mining payout" ;;
     simple) expected="advanced" ;;
+    ln-starting) expected="catching up with the chain" ;;
     ln-running|ln-running@es) expected="460 550" ;;
     restore) expected="I also used a passphrase" ;;
     tor-live) expected="Settings" ;;
