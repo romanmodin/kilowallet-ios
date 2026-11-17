@@ -53,7 +53,11 @@ fun RpcNodePanel(model: WalletModel, platform: AppPlatform) {
             url = c.url; if (c.user.isNotEmpty()) user = c.user; if (c.pass.isNotEmpty()) pass = c.pass; msg = null
         }.onFailure { msg = "Not a node address: ${it.message}" }
     }
-    fun save() { model.setRpcConns(conns.toList()) }
+    fun save() {
+        runCatching { model.setRpcConns(conns.toList()) }
+            .onFailure { msg = it.message ?: "Could not save RPC settings." }
+        conns.clear(); conns.addAll(model.rpcConns()); on = model.useRpc()
+    }
     fun typed(): RpcConn? = runCatching { RpcConn.parse(url).copy(user = user, pass = pass) }.getOrElse { msg = it.message; null }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -77,7 +81,7 @@ fun RpcNodePanel(model: WalletModel, platform: AppPlatform) {
                 Explain(if (on) "On: your node answers everything. The first time it looks for this wallet's coins, which can take a few minutes."
                     else "Off: the Electrum server above is used.")
             }
-            Switch(checked = on, onCheckedChange = { on = it; model.setUseRpc(it) })
+            Switch(checked = on, onCheckedChange = { model.setUseRpc(it); on = model.useRpc() })
         }
         Field(url, { url = it.trim(); msg = null }, "the RPC address, port included")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

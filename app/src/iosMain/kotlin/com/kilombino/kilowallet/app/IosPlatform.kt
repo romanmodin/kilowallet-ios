@@ -96,7 +96,7 @@ class IosPlatform(private val bridge: IosBridge, override val demoScreen: String
     override fun secretGet(name: String): String? = if (demoScreen != null) prefs.get("secret.$name") else bridge.secretLoad(name)
     override fun secretPut(name: String, value: String?) {
         if (demoScreen != null) { prefs.put("secret.$name", value); return }
-        if (value == null) bridge.secretDelete(name) else bridge.secretSave(name, value)
+        if (value == null) bridge.secretDelete(name) else bridge.secretSave(name, value)?.let { error(it) }
     }
 
     /**

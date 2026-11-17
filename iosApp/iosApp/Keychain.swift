@@ -140,9 +140,12 @@ enum AppSecret {
     }
 
     static func save(_ name: String, _ value: String) -> String? {
-        delete(name)
+        let data = Data(value.utf8)
+        let update = SecItemUpdate(query(name) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if update == errSecSuccess { return nil }
+        guard update == errSecItemNotFound else { return "Keychain error \(update)" }
         var q = query(name)
-        q[kSecValueData as String] = Data(value.utf8)
+        q[kSecValueData as String] = data
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(q as CFDictionary, nil)
         return status == errSecSuccess ? nil : "Keychain error \(status)"
