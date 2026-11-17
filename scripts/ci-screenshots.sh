@@ -182,11 +182,21 @@ for screen in welcome history create restore watch home simple lightning ln-star
   if [ -n "$expected" ]; then
     check_args=("$SHOT" "$expected")
     [ "$screen" = request ] && check_args+=("?chain=xbt&amount=0.00120000")
-    [ "$screen" = rpc-settings ] && check_args+=("Read BTC from my node" "node.invalid")
-    [ "$screen" = rpc-cert ] && check_args+=("IT MATCHES" "CANCEL" "SHA-256")
+    check_rendered() {
+      "$CHECKER" "${check_args[@]}" || return $?
+      case "$screen" in
+        rpc-settings)
+          "$CHECKER" "$SHOT" "Read BTC from my node" || return $?
+          "$CHECKER" "$SHOT" "node.invalid" || return $? ;;
+        rpc-cert)
+          "$CHECKER" "$SHOT" "IT MATCHES" || return $?
+          "$CHECKER" "$SHOT" "CANCEL" || return $?
+          "$CHECKER" "$SHOT" "SHA-256" || return $? ;;
+      esac
+    }
     rendered=false
     for attempt in 1 2 3; do
-      if "$CHECKER" "${check_args[@]}"; then rendered=true; break; fi
+      if check_rendered; then rendered=true; break; fi
       cp "$SHOT" "$OUT/$name-ocr-attempt-$attempt.png"
       if [ "$base" = ln-starting ]; then
         # Process inventory is diagnostic evidence, not proof of foreground state.

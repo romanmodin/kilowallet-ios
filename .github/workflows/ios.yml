@@ -50,6 +50,7 @@ jobs:
         run: |
           python3 scripts/test-runtime-check.py
           python3 scripts/test-ui-startup.py
+          python3 scripts/test-rpc-capture.py
 
       - name: App regression tests on the iOS simulator
         run: ./gradlew :app:iosX64Test --stacktrace
