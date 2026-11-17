@@ -18,8 +18,7 @@ jobs:
   native:
     name: Diagnostic only - RC7 Lightning startup frame
     runs-on: macos-15-intel
-    # Measured prior run: ~43m setup/tests +124m capture +device compilation.
-    # Keep every runtime assertion and per-screen deadline; budget device build too.
+    # Focused simulator diagnostic only; never use as full native qualification.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4

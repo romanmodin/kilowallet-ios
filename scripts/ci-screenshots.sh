@@ -169,6 +169,11 @@ for screen in welcome history create restore watch home simple lightning ln-star
     rendered=false
     for attempt in 1 2 3; do
       if "$CHECKER" "${check_args[@]}"; then rendered=true; break; fi
+      if [ "$base" = ln-starting ]; then
+        # Retain the same running process and fixture. A readiness marker does not
+        # establish foreground presentation on the hosted simulator.
+        xcrun simctl launch "$UDID" "$BUNDLE" | tee -a "screenshots-logs/$name.foreground"
+      fi
       sleep 3
       xcrun simctl io "$UDID" screenshot "$SHOT"
     done
