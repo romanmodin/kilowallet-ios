@@ -71,6 +71,12 @@ object JvmTransport : TransportFactory {
                     line.append(ch.toChar())
                 }
             }
+            override fun readBytes(maxBytes: Int): ByteArray? {
+                require(maxBytes in 1..65536)
+                val bytes = ByteArray(maxBytes)
+                val n = s.getInputStream().read(bytes)
+                return if (n < 0) null else bytes.copyOf(n)
+            }
             override fun close() { runCatching { s.close() } }
         }
     }

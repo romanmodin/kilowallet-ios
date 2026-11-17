@@ -559,5 +559,6 @@
   "Tor did not come up: {0}": "Tor non si è avviato: {0}",
   "no connection through Tor on this platform": "nessuna connessione via Tor su questa piattaforma",
   "added": "aggiunto",
-  "testing…": "prova in corso…"
+  "testing…": "prova in corso…",
+  "Could not save RPC settings.": "Impossibile salvare le impostazioni RPC."
 }

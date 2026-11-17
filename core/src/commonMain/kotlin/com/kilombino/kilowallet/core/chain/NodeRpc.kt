@@ -166,7 +166,7 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
     private var testing = false
     private val utxos = HashMap<String, MutableList<ElectrumClient.Utxo>>()
 
-    class NodeException(message: String) : ElectrumException(message)
+    class NodeException(message: String, val rpcCode: Int? = null) : ElectrumException(message)
 
     @OptIn(ExperimentalEncodingApi::class)
     private fun call(c: RpcConn, method: String, vararg params: Any?, wallet: String? = null, timeoutSeconds: Int = 60): JsonElement {
@@ -200,7 +200,9 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
             throw NodeException("${c.url} answered (HTTP $code), but it is not a Bitcoin node's RPC.")
         }
         val err = o["error"]
-        if (err != null && err !is JsonNull) throw NodeException((err as? JsonObject)?.get("message")?.jsonPrimitive?.contentOrNull ?: err.toString())
+        if (err != null && err !is JsonNull) throw NodeException(
+            (err as? JsonObject)?.get("message")?.jsonPrimitive?.contentOrNull ?: err.toString(),
+            (err as? JsonObject)?.get("code")?.jsonPrimitive?.intOrNull)
         return o["result"] ?: JsonNull
     }
 
@@ -224,12 +226,23 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
     /**
      * The first connection that answers, on the BLAKE2b chain; then the node's watch-only wallet
      * (made the first time, looking back from the oldest coin the account still holds) and
-     * everything about it, read once.
+     * wallet data is loaded lazily only when a scan needs it.
      */
     fun connect(progress: (String) -> Unit = {}) {
         connectChain()
-        ensureWallet(progress)
-        load()
+        walletProgress = progress
+    }
+
+    private var walletProgress: (String) -> Unit = {}
+    private var walletReady = false
+    private var snapshotReady = false
+
+    private fun requireWallet() {
+        if (!walletReady) { ensureWallet(walletProgress); walletReady = true }
+    }
+
+    private fun requireSnapshot() {
+        if (!snapshotReady) { requireWallet(); load(); snapshotReady = true }
     }
 
     /** Only the first connection that answers, checked to be on the BLAKE2b chain. */
@@ -336,7 +349,10 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
         for ((id, t) in decodedMap) {
             val conf = t["confirmations"]?.jsonPrimitive?.intOrNull ?: 0
             if (conf < 0) continue
-            if (conf == 0 && runCatching { call("getmempoolentry", id) }.isFailure) continue // replaced or dropped
+            if (conf == 0) {
+                try { call("getmempoolentry", id) }
+                catch (e: NodeException) { if (e.rpcCode == -5) continue else throw e }
+            }
             val h = if (conf > 0) int(t["blockheight"]) else 0
             val d = t["decoded"]!!.jsonObject
             val touched = HashSet<String>()
@@ -349,14 +365,11 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
     private var tipCache = -1
     private fun tip(): Int { if (tipCache < 0) tipCache = call("getblockcount").jsonPrimitive.intOrNull ?: 0; return tipCache }
 
-    /** The wallet transaction with its hex and decoded form (cached once confirmed: it never changes). */
-    private fun wtx(txid: String): JsonObject? {
-        txCache[walletName + txid]?.let { return it }
-        if (walletName + txid in notOurs) return null
-        val t = runCatching { call("gettransaction", txid, true, true, wallet = walletName).jsonObject }.getOrNull()
-            ?: return null.also { notOurs += walletName + txid } // someone else's (an input of a payment to us)
-        if ((t["confirmations"]?.jsonPrimitive?.intOrNull ?: 0) >= 6) txCache[walletName + txid] = t
-        return t
+    /** Always refresh mutable confirmations and ownership; transport errors must fail the read. */
+    internal fun wtx(txid: String): JsonObject? = try {
+        call("gettransaction", txid, true, true, wallet = walletName).jsonObject
+    } catch (e: NodeException) {
+        if (e.rpcCode == -5) null else throw e
     }
 
     fun blockHeight(): Int = tip()
@@ -365,11 +378,13 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
     fun blockHeader(height: Int): String = call("getblockheader", call("getblockhash", height).jsonPrimitive.content, false).jsonPrimitive.content
 
     fun balance(sh: String): ScriptHashBalance {
+        requireSnapshot()
         val u = utxos[sh].orEmpty()
         return ScriptHashBalance(u.filter { it.height > 0 }.sumOf { it.value }, u.filter { it.height <= 0 }.sumOf { it.value })
     }
 
     fun status(sh: String): String? {
+        requireSnapshot()
         val h = history[sh] ?: return null
         if (h.isEmpty()) return null
         // The coins held go in too, so a balance read differently (maturing rewards) changes the status.
@@ -377,10 +392,15 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
         return Hashes.sha256((h.sortedBy { it.first }.joinToString("") { "${it.first}:${it.second}:" } + coins).encodeToByteArray()).toHex()
     }
 
-    fun history(sh: String): List<ElectrumClient.HistoryItem> =
-        history[sh].orEmpty().map { ElectrumClient.HistoryItem(it.first, it.second) }.sortedBy { if (it.height <= 0) Int.MAX_VALUE else it.height }
+    fun history(sh: String): List<ElectrumClient.HistoryItem> {
+        requireSnapshot()
+        return history[sh].orEmpty().map { ElectrumClient.HistoryItem(it.first, it.second) }.sortedBy { if (it.height <= 0) Int.MAX_VALUE else it.height }
+    }
 
-    fun listUnspent(sh: String): List<ElectrumClient.Utxo> = utxos[sh].orEmpty()
+    fun listUnspent(sh: String): List<ElectrumClient.Utxo> {
+        requireSnapshot()
+        return utxos[sh].orEmpty()
+    }
 
     fun estimateFeePerKb(blocks: Int): Double = runCatching {
         call("estimatesmartfee", blocks).jsonObject["feerate"]?.jsonPrimitive?.doubleOrNull ?: -1.0
@@ -389,6 +409,7 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
     fun relayFeePerKb(): Double = runCatching { dbl(call("getnetworkinfo").jsonObject["relayfee"]) }.getOrDefault(0.0)
 
     fun transaction(txid: String): String {
+        requireWallet()
         val hex = wtx(txid)?.get("hex")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() }
             ?: runCatching { call("getrawtransaction", txid).jsonPrimitive.contentOrNull }.getOrNull()
             ?: throw NodeException("The node does not know $txid (it needs txindex for others' transactions).")
@@ -401,8 +422,6 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
     fun broadcast(rawTxHex: String): String = call("sendrawtransaction", rawTxHex).jsonPrimitive.content
 
     companion object {
-        private val txCache = HashMap<String, JsonObject>()
-        private val notOurs = HashSet<String>()
 
         internal fun isBlake(dep: JsonObject): Boolean {
             fun active(o: JsonElement?) = (o as? JsonObject)?.get("active")?.jsonPrimitive?.booleanOrNull == true
@@ -467,49 +486,102 @@ class NodeRpcBackend(private val node: RpcNode, private val transports: Transpor
         }
 
         /**
-         * One HTTP/1.1 POST over a line stream ([LineTransport] reads up to each '\n'). The body
-         * goes with a trailing newline (counted in Content-Length); bitcoind's answers end with one
-         * too, so the body is read in whole lines, plain or chunked.
+         * One HTTP/1.1 POST. Outbound requests include a trailing newline, counted in
+         * Content-Length. Responses use raw reads so chunk boundaries never alter UTF-8 data.
          */
         internal fun httpPost(t: LineTransport, host: String, port: Int, path: String, auth: String, body: String): Pair<Int, String> {
             val len = body.encodeToByteArray().size + 1
             val head = "POST $path HTTP/1.1\r\nHost: $host:$port\r\nAuthorization: $auth\r\n" +
                 "Content-Type: application/json\r\nContent-Length: $len\r\nConnection: close\r\n\r\n"
             try { t.writeLine(head + body) } catch (e: Exception) { throw NodeException("Lost the connection to the node: ${e.message}") }
-            return readHttp { t.readLine() }
+            return readHttp { t.readBytes(it) }
         }
 
-        /** Parses an HTTP answer from its lines (null = closed): (status, body). */
-        internal fun readHttp(next: () -> String?): Pair<Int, String> {
-            fun line(): String? = next()?.removeSuffix("\r")
-            val status = line()?.split(" ")?.getOrNull(1)?.toIntOrNull() ?: throw NodeException("no HTTP answer from the node")
-            var length = -1; var chunked = false
-            while (true) {
-                val h = line() ?: break
-                if (h.isEmpty()) break
-                val k = h.substringBefore(':').trim().lowercase(); val v = h.substringAfter(':', "").trim()
-                if (k == "content-length") length = v.toIntOrNull() ?: -1
-                if (k == "transfer-encoding" && v.contains("chunked", true)) chunked = true
-            }
-            val out = StringBuilder()
-            fun readBytes(n: Int) {
-                var got = 0
-                while (got < n) {
-                    val l = next() ?: break
-                    out.append(l).append('\n'); got += l.encodeToByteArray().size + 1
+        /** Parse HTTP framing as bytes; decode UTF-8 only after all chunks are joined. */
+        internal fun readHttp(next: (Int) -> ByteArray?): Pair<Int, String> {
+            val limit = 8 * 1024 * 1024
+            var buffer = ByteArray(0)
+            var at = 0
+            fun byte(): Int? {
+                if (at == buffer.size) {
+                    buffer = next(8192) ?: return null
+                    if (buffer.isEmpty()) throw NodeException("Empty HTTP read")
+                    at = 0
                 }
+                return buffer[at++].toInt() and 255
+            }
+            var headerBytes = 0
+            fun line(): String {
+                val out = StringBuilder()
+                while (true) {
+                    val b = byte() ?: throw NodeException("Truncated HTTP framing")
+                    if (++headerBytes > 65536) throw NodeException("HTTP headers too large")
+                    if (b == 10) {
+                        if (!out.endsWith("\r")) throw NodeException("Invalid HTTP line ending")
+                        return out.dropLast(1).toString()
+                    }
+                    out.append(b.toChar())
+                }
+            }
+            val status = line().split(" ").getOrNull(1)?.toIntOrNull()
+                ?: throw NodeException("No HTTP answer from the node")
+            var length: Int? = null
+            var chunked = false
+            while (true) {
+                val h = line()
+                if (h.isEmpty()) break
+                val k = h.substringBefore(':').trim().lowercase()
+                val v = h.substringAfter(':', "").trim()
+                if (k == "content-length") {
+                    val n = v.toIntOrNull()?.takeIf { it in 0..limit } ?: throw NodeException("Invalid HTTP length")
+                    if (length != null && length != n) throw NodeException("Conflicting HTTP lengths")
+                    length = n
+                }
+                if (k == "transfer-encoding") {
+                    if (!v.equals("chunked", true)) throw NodeException("Unsupported HTTP transfer encoding")
+                    chunked = true
+                }
+            }
+            if (chunked && length != null) throw NodeException("Ambiguous HTTP framing")
+            val parts = ArrayList<ByteArray>()
+            var total = 0
+            fun read(n: Int) {
+                if (n < 0 || n > limit - total) throw NodeException("HTTP body too large")
+                val part = ByteArray(n)
+                for (i in part.indices) part[i] = (byte() ?: throw NodeException("Truncated HTTP body")).toByte()
+                total += n
+                parts += part
             }
             if (chunked) {
                 while (true) {
-                    val n = line()?.substringBefore(';')?.trim()?.toIntOrNull(16) ?: break
-                    if (n == 0) break
-                    readBytes(n)
-                    // A chunk's data that ended in '\n' leaves its CRLF on a line of its own.
-                    if (!out.endsWith("\r\n")) line()
+                    val n = line().substringBefore(';').trim().toIntOrNull(16)
+                        ?: throw NodeException("Invalid HTTP chunk size")
+                    if (n == 0) {
+                        while (line().isNotEmpty()) { /* bounded trailers */ }
+                        break
+                    }
+                    read(n)
+                    if (byte() != 13 || byte() != 10) throw NodeException("Invalid HTTP chunk delimiter")
                 }
-            } else if (length >= 0) readBytes(length)
-            else while (true) { val l = next() ?: break; out.append(l).append('\n') }
-            return status to out.toString().trim()
+            } else if (length != null) read(length)
+            else {
+                var eof = false
+                while (!eof) {
+                    val part = ByteArray(8192)
+                    var n = 0
+                    while (n < part.size) {
+                        val b = byte()
+                        if (b == null) { eof = true; break }
+                        if (total + n == limit) throw NodeException("HTTP body too large")
+                        part[n++] = b.toByte()
+                    }
+                    if (n > 0) { parts += part.copyOf(n); total += n }
+                }
+            }
+            val body = ByteArray(total)
+            var offset = 0
+            for (part in parts) { part.copyInto(body, offset); offset += part.size }
+            return status to body.decodeToString(throwOnInvalidSequence = true).trim()
         }
     }
 }

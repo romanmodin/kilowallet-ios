@@ -73,6 +73,9 @@ class IosPlatform(private val bridge: IosBridge, override val demoScreen: String
             override val fingerprint: String? = c.fingerprint()
             override fun writeLine(line: String) { c.writeLine(line)?.let { throw ElectrumException(it) } }
             override fun readLine(): String? = c.readLine()
+            override fun readBytes(maxBytes: Int): ByteArray? = c.readBytesHex(maxBytes)?.let {
+                com.kilombino.kilowallet.core.crypto.Hashes.hexToBytes(it)
+            }
             override fun close() = c.close()
         }
     }
@@ -137,6 +140,9 @@ class IosPlatform(private val bridge: IosBridge, override val demoScreen: String
                 override val fingerprint: String? = null
                 override fun writeLine(line: String) { c.writeLine(line)?.let { throw ElectrumException(it) } }
                 override fun readLine(): String? = c.readLine()
+            override fun readBytes(maxBytes: Int): ByteArray? = c.readBytesHex(maxBytes)?.let {
+                com.kilombino.kilowallet.core.crypto.Hashes.hexToBytes(it)
+            }
                 override fun close() = c.close()
             }
         }

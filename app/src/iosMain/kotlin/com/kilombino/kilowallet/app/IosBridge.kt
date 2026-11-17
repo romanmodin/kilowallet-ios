@@ -184,5 +184,7 @@ interface IosConnection {
     fun writeLine(line: String): String?
     /** The next line, or null when the connection closed or failed. */
     fun readLine(): String?
+    /** Up to maxBytes raw bytes encoded as hex, or null at EOF. */
+    fun readBytesHex(maxBytes: Int): String?
     fun close()
 }

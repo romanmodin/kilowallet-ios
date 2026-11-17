@@ -3009,5 +3009,6 @@
   "Tor did not come up: {0}": "Tor 未能启动：{0}",
   "no connection through Tor on this platform": "此平台上无法通过 Tor 连接",
   "added": "已添加",
-  "testing…": "正在测试…"
+  "testing…": "正在测试…",
+  "Could not save RPC settings.": "无法保存 RPC 设置。"
 }

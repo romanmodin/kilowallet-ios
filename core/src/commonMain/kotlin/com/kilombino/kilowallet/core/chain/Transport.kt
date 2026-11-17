@@ -12,6 +12,8 @@ interface LineTransport {
     fun writeLine(line: String)
     /** The next line without its terminator; null when the server closed the connection. */
     fun readLine(): String?
+    /** Raw RPC bytes, up to [maxBytes]; null at EOF. Do not mix with readLine on one connection. */
+    fun readBytes(maxBytes: Int): ByteArray? = throw ElectrumException("Raw reads are unsupported")
     fun close()
 }
 

@@ -3,7 +3,8 @@ package com.kilombino.kilowallet.core.chain
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import kotlin.test.*
+import kotlinx.serialization.json.*
 
 /** Your own node by RPC (Android 1.6.0's NodeRpcTest, same connection texts) and its HTTP over lines. */
 class NodeRpcTest {
@@ -31,7 +32,7 @@ class NodeRpcTest {
     }
 
     @Test fun readsHttpAnswersPlainAndChunked() {
-        fun read(vararg lines: String): Pair<Int, String> { val it = lines.iterator(); return NodeRpcBackend.readHttp { if (it.hasNext()) it.next() else null } }
+        fun read(vararg lines: String): Pair<Int, String> = response(lines.joinToString("\n", postfix = "\n").encodeToByteArray())
         val body = """{"result":5,"error":null,"id":"kw"}"""
         assertEquals(200 to body, read("HTTP/1.1 200 OK\r", "Content-Type: application/json\r", "Content-Length: ${body.length + 1}\r", "\r", body))
         assertEquals(401 to "", read("HTTP/1.1 401 Unauthorized\r", "Content-Length: 0\r", "\r"))
@@ -45,6 +46,89 @@ class NodeRpcTest {
         val not = kotlinx.serialization.json.Json.parseToJsonElement("""{"deployments":{"taproot":{"active":true}}}""").let { it as kotlinx.serialization.json.JsonObject }
         assertTrue(NodeRpcBackend.isBlake(active))
         assertTrue(!NodeRpcBackend.isBlake(not))
+    }
+
+    private fun response(bytes: ByteArray, fragment: Int = 7): Pair<Int, String> {
+        var offset = 0
+        return NodeRpcBackend.readHttp { max ->
+            if (offset == bytes.size) null else {
+                val end = minOf(bytes.size, offset + fragment, offset + max)
+                bytes.copyOfRange(offset, end).also { offset = end }
+            }
+        }
+    }
+
+    @Test fun chunkBoundariesIncludingUtf8NeverAlterTheBody() {
+        val body = """{"result":"first café 中 last","error":null,"id":"kw"}"""
+        val bytes = body.encodeToByteArray()
+        for (split in 1 until bytes.size) {
+            val wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".encodeToByteArray() +
+                (split.toString(16) + ";test=yes\r\n").encodeToByteArray() + bytes.copyOfRange(0, split) +
+                ("\r\n" + (bytes.size - split).toString(16) + "\r\n").encodeToByteArray() +
+                bytes.copyOfRange(split, bytes.size) + "\r\n0\r\nX-Test: yes\r\n\r\n".encodeToByteArray()
+            for (fragment in listOf(1, 3, 8192)) assertEquals(200 to body, response(wire, fragment), "split=$split fragment=$fragment")
+        }
+        assertEquals(200 to body, response(("HTTP/1.1 200 OK\r\nContent-Length: ${bytes.size}\r\n\r\n").encodeToByteArray()+bytes))
+    }
+
+    @Test fun invalidAndTruncatedHttpFailsClosed() {
+        for (wire in listOf(
+            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nabc",
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nab",
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabcXX0\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n-1\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 9000000\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+        )) assertFailsWith<NodeRpcBackend.NodeException> { response(wire.encodeToByteArray()) }
+    }
+
+    private fun backend(answer: () -> JsonObject): NodeRpcBackend {
+        val transport = TransportFactory { _, _, _, _ ->
+            object : LineTransport {
+                override val fingerprint: String? = null
+                var bytes = ByteArray(0)
+                var offset = 0
+                override fun writeLine(line: String) {
+                    val method = Json.parseToJsonElement(line.substringAfter("\r\n\r\n")).jsonObject["method"]!!.jsonPrimitive.content
+                    val result = when(method) {
+                        "getdeploymentinfo" -> Json.parseToJsonElement("""{"result":{"deployments":{"blake2b":{"active":true}}},"error":null}""").jsonObject
+                        "getnetworkinfo" -> Json.parseToJsonElement("""{"result":{"subversion":"test"},"error":null}""").jsonObject
+                        "gettransaction" -> answer()
+                        else -> error("Unexpected mock RPC $method")
+                    }.toString().encodeToByteArray()
+                    bytes = "HTTP/1.1 200 OK\r\nContent-Length: ${result.size}\r\n\r\n".encodeToByteArray() + result
+                }
+                override fun readLine(): String? = error("RPC must read bytes")
+                override fun readBytes(maxBytes: Int): ByteArray? {
+                    if (offset == bytes.size) return null
+                    val end = minOf(bytes.size, offset + maxBytes)
+                    return bytes.copyOfRange(offset,end).also { offset = end }
+                }
+                override fun close() {}
+            }
+        }
+        val key = com.kilombino.kilowallet.core.wallet.Signer.accountZpub(List(11) { "abandon" } + "about", "")
+        return NodeRpcBackend(RpcNode(listOf(RpcConn.parse("http://127.0.0.1:8332")),key,
+            com.kilombino.kilowallet.core.crypto.ScriptType.P2WPKH),transport).also { it.connectChain() }
+    }
+
+    @Test fun transientTransactionFailuresDoNotHideLaterAnswersOrOtherBackends() {
+        var calls = 0
+        val good = Json.parseToJsonElement("""{"result":{"confirmations":8,"hex":"synthetic"},"error":null}""").jsonObject
+        val b = backend { if (++calls == 1) throw ElectrumException("synthetic timeout") else good }
+        assertFailsWith<NodeRpcBackend.NodeException> { b.wtx("synthetic-id") }
+        assertEquals(8, b.wtx("synthetic-id")!!["confirmations"]!!.jsonPrimitive.int)
+        assertEquals(2,calls)
+        val other = backend { Json.parseToJsonElement("""{"result":{"confirmations":0},"error":null}""").jsonObject }
+        assertEquals(0, other.wtx("synthetic-id")!!["confirmations"]!!.jsonPrimitive.int)
+    }
+
+    @Test fun onlyRpcErrorMinusFiveMeansNonWalletAndIsNotPermanentlyCached() {
+        var code = -5
+        val b = backend { Json.parseToJsonElement("""{"result":null,"error":{"code":$code,"message":"mock"}}""").jsonObject }
+        assertNull(b.wtx("synthetic-id"))
+        code = -28
+        assertEquals(-28, assertFailsWith<NodeRpcBackend.NodeException> { b.wtx("synthetic-id") }.rpcCode)
     }
 
     /**

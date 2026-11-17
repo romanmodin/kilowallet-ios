@@ -559,5 +559,6 @@
   "Tor did not come up: {0}": "Tor no s'ha engegat: {0}",
   "no connection through Tor on this platform": "no hi ha connexió per Tor en aquesta plataforma",
   "added": "afegit",
-  "testing…": "provant…"
+  "testing…": "provant…",
+  "Could not save RPC settings.": "No s’ha pogut desar la configuració RPC."
 }

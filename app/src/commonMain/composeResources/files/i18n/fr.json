@@ -3022,5 +3022,6 @@
   "Tor did not come up: {0}": "Tor n'a pas démarré : {0}",
   "no connection through Tor on this platform": "pas de connexion par Tor sur cette plateforme",
   "added": "ajouté",
-  "testing…": "test en cours…"
+  "testing…": "test en cours…",
+  "Could not save RPC settings.": "Impossible d’enregistrer les paramètres RPC."
 }

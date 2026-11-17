@@ -793,5 +793,6 @@
   "CHECK PAYMENT": "COMPROBAR PAGO",
   "The saved JoinBlaket commitment history could not be read or saved. Nothing was signed or sent.": "No se pudo leer o guardar el historial de compromisos de JoinBlaket. No se ha firmado ni enviado nada.",
   "added": "añadido",
-  "testing…": "probando…"
+  "testing…": "probando…",
+  "Could not save RPC settings.": "No se pudo guardar la configuración RPC."
 }
