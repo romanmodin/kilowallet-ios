@@ -64,7 +64,7 @@ fun SettingsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
     var port by remember { mutableStateOf(state.endpoint.port.toString()) }
     var confirmDelete by remember { mutableStateOf(false) }
     var recipients by remember { mutableStateOf(platform.demoScreen == "recipients") }
-    var nodeOpen by remember { mutableStateOf(false) }
+    var nodeOpen by remember { mutableStateOf(platform.demoScreen?.substringBefore('@') in setOf("rpc-settings", "rpc-cert", "rpc-error")) }
     var zpubQr by remember { mutableStateOf(false) }
     val hot = state.kind == WalletKind.HOT
     val poolsOn = model.pools.state.collectAsState().value.enabled

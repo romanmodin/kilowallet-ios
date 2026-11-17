@@ -259,6 +259,8 @@ class I18nTest {
         "alias", "birthday", "enabled", "expected_pubkey", "fee_min", "fee_pct", "fund_addrs", "peers", "settle_index", "ln.12",
         "GET", "txid", "vout", "value", "scriptpubkey_address", "expired", "starting", "desc = ", "lightning:", "LIGHTNING:",
         "bitcoin:12", "pubkey@host:port", "Kilombino", "Kilowallet-", "Kilowallet-demo", "coffee", "7a", "ab", "s",
+        // Debug screenshot case IDs and synthetic credentials are not UI copy.
+        "rpc-settings", "rpc-cert", "rpc-error", "synthetic-password",
         "ln-starting", "ln-running", "ln-failed", "ln-live", "(?i)\\\\blno1[0-9a-z]+", "31 Oct 23:15", "Sats", "– sats",
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         // The backup file: the settings' JSON keys and type tags (the Android app's), and its file name;

@@ -1760,6 +1760,14 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     "immature" -> scan()
                     "receive", "request" -> { go(Screen.Receive); platform.markReady(screen) }
                     "settings" -> { go(Screen.Settings); platform.markReady(screen) }
+                    "rpc-settings", "rpc-cert", "rpc-error" -> {
+                        // Static UI fixtures only: memory preferences/secrets, no RPC or scan.
+                        check(platform.demoScreen != null)
+                        val connections = listOf(RpcConn("https://node.invalid:8332/", "demo", "synthetic-password", "ab".repeat(32)))
+                        platform.secretPut(K_RPC, RpcConn.listToJson(connections))
+                        rpcCache = connections
+                        go(Screen.Settings) // RpcNodePanel marks ready after it scrolls into view.
+                    }
                     "lightning" -> { selectTab(Tab.LIGHTNING); platform.markReady(screen) }
                     "ln-bridge" -> {
                         // A made-up SHA-256 invoice of 1,000 sats and a price, only so the bridge's dialog shows.

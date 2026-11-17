@@ -63,7 +63,7 @@ capture_failure_diagnostics() {
 
 n=0
 failures=0
-for screen in welcome history create restore watch home simple lightning ln-starting ln-running ln-failed ark locked receive send review replace settings pool-intro pools pool-join pool-create pool-pay pool-round home@es receive@es settings@es lightning@es ln-running@es pools@es pool-round@zh home@zh dice backup cpfp receive-taproot settings-taproot pool-history psbt immature dice@es backup@es pool-history@es psbt@es ark-ready ark-ready@es ark@es ln-bridge ln-move settings-notify ln-bridge@es ark-live tor-live tor-log ln-live wallets private note request export coins recipients filters units backup-check pool-v6 pool-v6@es pool-create-v6 jb-send jb-plan jb-progress jb-sent jb-failed jb-send@es jb-plan@es jb-sent@zh; do
+for screen in welcome history create restore watch home simple lightning ln-starting ln-running ln-failed ark locked receive send review replace settings pool-intro pools pool-join pool-create pool-pay pool-round home@es receive@es settings@es lightning@es ln-running@es pools@es pool-round@zh home@zh dice backup cpfp receive-taproot settings-taproot pool-history psbt immature dice@es backup@es pool-history@es psbt@es ark-ready ark-ready@es ark@es ln-bridge ln-move settings-notify ln-bridge@es ark-live tor-live tor-log ln-live wallets private note request export coins recipients filters units backup-check pool-v6 pool-v6@es pool-create-v6 jb-send jb-plan jb-progress jb-sent jb-failed jb-send@es jb-plan@es jb-sent@zh rpc-settings rpc-cert rpc-error; do
   n=$((n + 1))
   base=${screen%@*}
   name=${screen/@/-}
@@ -138,6 +138,9 @@ for screen in welcome history create restore watch home simple lightning ln-star
   expected=""
   case "$screen" in
     welcome) expected="Restore from words" ;;
+    rpc-settings) expected="Or your own node by RPC" ;;
+    rpc-cert) expected="Is this your node" ;;
+    rpc-error) expected="Plain http only" ;;
     pool-intro|pools|pool-round|pools@es|pool-round@zh|pool-v6|pool-v6@es) expected="Kilojoin" ;;
     pool-join) expected="Join" ;;
     pool-create|pool-create-v6) expected="Open a pool" ;;
@@ -165,6 +168,8 @@ for screen in welcome history create restore watch home simple lightning ln-star
   if [ -n "$expected" ]; then
     check_args=("$SHOT" "$expected")
     [ "$screen" = request ] && check_args+=("?chain=xbt&amount=0.00120000")
+    [ "$screen" = rpc-settings ] && check_args+=("Read BTC from my node" "node.invalid")
+    [ "$screen" = rpc-cert ] && check_args+=("IT MATCHES" "CANCEL" "SHA-256")
     rendered=false
     for attempt in 1 2 3; do
       if "$CHECKER" "${check_args[@]}"; then rendered=true; break; fi

@@ -1,5 +1,7 @@
 package com.kilombino.kilowallet.app.ui
 
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -10,6 +12,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,9 +48,16 @@ fun RpcNodePanel(model: WalletModel, platform: AppPlatform) {
     var url by remember { mutableStateOf("") }
     var user by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
-    var msg by remember { mutableStateOf<String?>(null) }
+    val demo = platform.demoScreen?.substringBefore('@')
+    val rpcDemo = demo in setOf("rpc-settings", "rpc-cert", "rpc-error")
+    val intoView = remember { BringIntoViewRequester() }
+    var msg by remember { mutableStateOf(
+        if (demo == "rpc-error") runCatching { RpcConn.parse("http://node.invalid:8332/") }.exceptionOrNull()?.message else null
+    ) }
     // An https node's certificate, shown for the user to compare before any password goes out.
-    var toTrust by remember { mutableStateOf<Pair<RpcConn, String>?>(null) }
+    var toTrust by remember { mutableStateOf<Pair<RpcConn, String>?>(
+        if (demo == "rpc-cert") RpcConn("https://node.invalid:8332/", "demo", "synthetic-password") to "ab".repeat(32) else null
+    ) }
     var addAfterTrust by remember { mutableStateOf(false) }
     fun fill(text: String) {
         runCatching { RpcConn.parse(text) }.onSuccess { c ->
@@ -60,7 +71,16 @@ fun RpcNodePanel(model: WalletModel, platform: AppPlatform) {
     }
     fun typed(): RpcConn? = runCatching { RpcConn.parse(url).copy(user = user, pass = pass) }.getOrElse { msg = it.message; null }
 
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    if (rpcDemo) LaunchedEffect(demo) {
+        // Scroll the actual Settings panel into view; no alternate screenshot layout.
+        withFrameNanos { }
+        withFrameNanos { }
+        intoView.bringIntoView()
+        withFrameNanos { }
+        withFrameNanos { }
+        platform.markReady(requireNotNull(demo))
+    }
+    Column(modifier = Modifier.bringIntoViewRequester(intoView), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Or your own node by RPC", style = MaterialTheme.typography.bodyMedium, color = TextMain)
         Explain("Connect straight to your Bitcoin node (Knots with BLAKE2b), no Electrum server needed. It gets a " +
             "watch-only wallet for this account (public key only); your keys never leave the phone. Add more than one " +
