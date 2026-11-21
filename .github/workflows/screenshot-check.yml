@@ -7,6 +7,11 @@ on:
       - 'scripts/fixtures/**'
       - '.github/workflows/screenshot-check.yml'
   workflow_dispatch:
+    inputs:
+      roblo_preview:
+        description: Exercise the pinned offline client on a disposable iPhone simulator
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -76,3 +81,29 @@ jobs:
           test "$result" -eq 1
       - name: Verify restore capture requirements
         run: python3 scripts/test-restore-capture.py
+
+  # An opt-in simulator check, independent of full app qualification. No signing environment.
+  roblo-preview:
+    if: github.event_name == 'workflow_dispatch' && inputs.roblo_preview
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch and verify the pinned client artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/roblo-simulator/fetch-client.sh "$RUNNER_TEMP/kw-client"
+      - name: Open the local client on a disposable iPhone simulator
+        run: scripts/roblo-simulator/check-client.sh "$RUNNER_TEMP/kw-client/client.zip" "$RUNNER_TEMP/kw-preview"
+      - name: Preserve render evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roblo-client-simulator
+          path: ${{ runner.temp }}/kw-preview/
+          if-no-files-found: warn

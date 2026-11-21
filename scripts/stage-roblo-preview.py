@@ -11,6 +11,24 @@ import zipfile
 PIN = "c6070977d3da505b6726fd732f496ce124d35c66995f5743e6369ea52a9b55de"
 
 
+# Publisher overlay on the disposable copy only. The original archive stays byte-for-byte pinned.
+OFFLINE_CSP = (
+    "default-src 'none'; script-src file: 'unsafe-inline' 'wasm-unsafe-eval'; "
+    "style-src file: 'unsafe-inline'; img-src file: data: blob:; media-src file: data: blob:; "
+    "font-src file: data:; worker-src file: blob:; connect-src 'none'; "
+    "object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+)
+
+
+def restrict_index(index):
+    html = index.read_bytes()
+    prefix = b"<!doctype html><head>"
+    if not html.startswith(prefix):
+        raise ValueError("expected pinned client HTML prologue")
+    policy = f'<meta http-equiv="Content-Security-Policy" content="{OFFLINE_CSP}">'.encode("ascii")
+    index.write_bytes(prefix + policy + html[len(prefix):])
+
+
 def stage(archive, documents):
     data = archive.read_bytes()
     if hashlib.sha256(data).hexdigest() != PIN:
@@ -33,6 +51,7 @@ def stage(archive, documents):
         for name in ("index.html", "SOURCE", "LICENSE"):
             if not (root / name).is_file():
                 raise ValueError(name)
+        restrict_index(root / "index.html")
         os.rename(root, destination)
 
 

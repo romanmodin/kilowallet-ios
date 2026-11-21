@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		A2DB94A1B8D1D4BBE8CA3D52 /* iOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 399D08DBDA3C31E197EB6961 /* iOSApp.swift */; };
 		8C24DF3C6F8D8C3DF2172AB5 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87BD7A0AA721718E96D130B1 /* ContentView.swift */; };
+		2657B1D070ED47C2A61CB1B0 /* RobloOfflinePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 631701C556FE4EF489E597B3 /* RobloOfflinePreview.swift */; };
 		97229F7A1A6BE1044726833E /* Bridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A8FA1AD56754D6005D93FB9 /* Bridge.swift */; };
 		C0FFEE000000000000000A01 /* LndmobileEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE000000000000000A02 /* LndmobileEngine.swift */; };
 		C0FFEE000000000000000A03 /* ArkEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE000000000000000A04 /* ArkEngine.swift */; };
@@ -29,6 +30,7 @@
 /* Begin PBXFileReference section */
 		399D08DBDA3C31E197EB6961 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSApp.swift; sourceTree = "<group>"; };
 		87BD7A0AA721718E96D130B1 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		631701C556FE4EF489E597B3 /* RobloOfflinePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobloOfflinePreview.swift; sourceTree = "<group>"; };
 		9A8FA1AD56754D6005D93FB9 /* Bridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bridge.swift; sourceTree = "<group>"; };
 		C0FFEE000000000000000A02 /* LndmobileEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LndmobileEngine.swift; sourceTree = "<group>"; };
 		C0FFEE000000000000000A04 /* ArkEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArkEngine.swift; sourceTree = "<group>"; };
@@ -103,6 +105,7 @@
 			children = (
 				399D08DBDA3C31E197EB6961 /* iOSApp.swift */,
 				87BD7A0AA721718E96D130B1 /* ContentView.swift */,
+				631701C556FE4EF489E597B3 /* RobloOfflinePreview.swift */,
 				9A8FA1AD56754D6005D93FB9 /* Bridge.swift */,
 				C0FFEE000000000000000A02 /* LndmobileEngine.swift */,
 				C0FFEE000000000000000A04 /* ArkEngine.swift */,
@@ -242,6 +245,7 @@
 			files = (
 				A2DB94A1B8D1D4BBE8CA3D52 /* iOSApp.swift in Sources */,
 				8C24DF3C6F8D8C3DF2172AB5 /* ContentView.swift in Sources */,
+				2657B1D070ED47C2A61CB1B0 /* RobloOfflinePreview.swift in Sources */,
 				97229F7A1A6BE1044726833E /* Bridge.swift in Sources */,
 				C0FFEE000000000000000A01 /* LndmobileEngine.swift in Sources */,
 				C0FFEE000000000000000A03 /* ArkEngine.swift in Sources */,
