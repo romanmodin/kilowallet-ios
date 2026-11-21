@@ -1,5 +1,8 @@
 import SwiftUI
 import UIKit
+#if DEBUG && targetEnvironment(simulator)
+import WebKit
+#endif
 import KilowalletApp
 
 /// Hosts the Compose UI (shared Kotlin, `app/src/commonMain`) and hands it the Swift services.
@@ -34,7 +37,15 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         ZStack {
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.environment["KW_ROBLO_PREVIEW"] == "1" {
+                RobloOfflinePreview()
+            } else {
+                ComposeView().ignoresSafeArea(.all)
+            }
+            #else
             ComposeView().ignoresSafeArea(.all)
+            #endif
             if scenePhase != .active {
                 Color.black.ignoresSafeArea()
                 Text("Kilowallet").foregroundColor(.white)
@@ -46,3 +57,32 @@ struct ContentView: View {
         }
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+// Simulator-only compatibility probe. Never attach Bridge.shared to this page.
+private struct RobloOfflinePreview: UIViewRepresentable {
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        let view = WKWebView(frame: .zero, configuration: config)
+        let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("roblo-preview", isDirectory: true)
+        let index = root.appendingPathComponent("index.html")
+        let rules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}},{"trigger":{"url-filter":"^(file:|data:|blob:)"},"action":{"type":"ignore-previous-rules"}}]"#
+        WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: "roblo-offline-v1", encodedContentRuleList: rules
+        ) { list, error in
+            guard error == nil, let list = list,
+                  FileManager.default.fileExists(atPath: index.path) else {
+                view.loadHTMLString("<p>Offline preview unavailable. Stage the pinned client first.</p>", baseURL: nil)
+                return
+            }
+            view.configuration.userContentController.add(list)
+            view.loadFileURL(index, allowingReadAccessTo: root)
+        }
+        return view
+    }
+
+    func updateUIView(_ view: WKWebView, context: Context) {}
+}
+#endif
