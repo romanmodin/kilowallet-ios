@@ -15,6 +15,7 @@ def stage(archive, documents):
     data = archive.read_bytes()
     if hashlib.sha256(data).hexdigest() != PIN:
         raise ValueError("unexpected Roblosats client digest")
+    documents = documents.resolve(strict=True)
     destination = documents / "roblo-preview"
     if destination.exists():
         raise FileExistsError(destination)
