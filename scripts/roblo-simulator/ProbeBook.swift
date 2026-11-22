@@ -36,6 +36,13 @@ enum ProbeBook {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
+    static let fixture: RobloPublicBook? = {
+        guard ProcessInfo.processInfo.arguments.contains("--offline-book-probe"),
+              let url = Bundle.main.url(forResource: "book-fixture", withExtension: "json"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return RobloPublicBook(coordinator: .kilobot, publicJSON: data)
+    }()
+
     static func runIfRequested() async {
         guard ProcessInfo.processInfo.arguments.contains("--offline-book-probe") else { return }
         let receipt = FileManager.default.temporaryDirectory.appendingPathComponent("kw-offers-result.json")
@@ -46,26 +53,18 @@ enum ProbeBook {
             guard !web.configuration.websiteDataStore.isPersistent else {
                 throw ProbeFailure(stage: "persistent store")
             }
-            stage = "local fixture reload"
-            let fixture = try script("book-fixture")
-            web.configuration.userContentController.addUserScript(WKUserScript(
-                source: fixture, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-            web.reload()
-            var ready = false
-            for _ in 0..<150 {
-                if let ok = try? await web.evaluateJavaScript(
-                    "document.readyState === 'complete' && typeof document.kwOfflineBookReads === 'number'"
-                ) as? Bool, ok { ready = true; break }
-                try await Task.sleep(nanoseconds: 200_000_000)
+            guard fixture != nil else { throw ProbeFailure(stage: "invalid fixture") }
+            stage = "public read and blocked requests"
+            guard let access = try await web.callAsyncJavaScript(try script("book-access"),
+                arguments: [:], in: nil, contentWorld: .page) as? [String: Any] else {
+                throw ProbeFailure(stage: stage)
             }
-            guard ready else { throw ProbeFailure(stage: stage) }
             stage = "search and filter"
-            // Separate script world; reads the rendered client DOM and operates only search controls.
             guard let matches = try await web.callAsyncJavaScript(try script("book-search"),
-                arguments: [:], in: nil, contentWorld: .defaultClient) as? [String: Any],
-                  let reads = try await web.evaluateJavaScript("document.kwOfflineBookReads") as? Int,
-                  reads > 0 else { throw ProbeFailure(stage: stage) }
-            report = ["version": 1, "fixtureReads": reads, "matches": matches]
+                arguments: [:], in: nil, contentWorld: .defaultClient) as? [String: Any] else {
+                throw ProbeFailure(stage: stage)
+            }
+            report = ["version": 2, "access": access, "matches": matches]
         } catch {
             // Don't serialize WebKit error dictionaries or any page data into workflow logs.
             report = ["failedStage": (error as? ProbeFailure)?.stage ?? stage]

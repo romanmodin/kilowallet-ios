@@ -17,9 +17,12 @@ app="$tmp/Preview.app"
 mkdir "$app"
 bundle=dev.kilowallet.tests.RobloPreview
 sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
+xcrun swiftc -parse-as-library -swift-version 5 -D ROBLO_BOOK_TESTS \
+  iosApp/iosApp/RobloPublicBook.swift "$src/BookChecks.swift" -o "$tmp/check-book"
+"$tmp/check-book" "$src/book-fixture.json" "$tmp/expected-book.js"
 xcrun swiftc -parse-as-library -swift-version 5 -D DEBUG -sdk "$sdk" -target "$(uname -m)-apple-ios17.0-simulator" \
-  iosApp/iosApp/RobloOfflinePreview.swift "$src/ProbeApp.swift" "$src/ProbeBook.swift" -o "$app/Preview"
-cp "$src/book-fixture.js" "$src/book-search.js" "$app/"
+  iosApp/iosApp/RobloOfflinePreview.swift iosApp/iosApp/RobloPublicBook.swift "$src/ProbeApp.swift" "$src/ProbeBook.swift" -o "$app/Preview"
+cp "$src/book-fixture.json" "$src/book-access.js" "$src/book-search.js" "$app/"
 python3 - "$app/Info.plist" "$bundle" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], 'wb') as f:
@@ -83,7 +86,9 @@ sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 receipt={'run':os.environ['GITHUB_RUN_ID'],'attempt':os.environ['GITHUB_RUN_ATTEMPT'],'source':os.environ['GITHUB_SHA'],
          'runtime':runtime,'deviceType':device,'viewSha256':sha('iosApp/iosApp/RobloOfflinePreview.swift'),
          'clientSha256':sha(archive),'screenshotSha256':sha(out/'landing.png'),'visible':['Start','Recovery'],
-         'orderBook':{'fixtureSha256':sha('scripts/roblo-simulator/book-fixture.js'),
+         'orderBook':{'fixtureSha256':sha('scripts/roblo-simulator/book-fixture.json'),
+                      'nativeAdapterSha256':sha('iosApp/iosApp/RobloPublicBook.swift'),
+                      'accessProbeSha256':sha('scripts/roblo-simulator/book-access.js'),
                       'driverSha256':sha('scripts/roblo-simulator/book-search.js'),
                       'resultSha256':sha(out/'book-result.json'),'screenshotSha256':sha(out/'offers.png')},
          'scope':'isolated simulator preview; no wallet engines linked'}

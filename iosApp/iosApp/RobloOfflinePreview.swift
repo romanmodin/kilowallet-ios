@@ -4,7 +4,16 @@ import WebKit
 import CryptoKit
 
 // Simulator-only compatibility probe. Never attach Bridge.shared to this page.
-struct RobloOfflinePreview: UIViewRepresentable {
+struct RobloOfflinePreview: View {
+    // Each new snapshot gets its own ephemeral store and freshly installed content rules.
+    let book: RobloPublicBook?
+    init(book: RobloPublicBook? = nil) { self.book = book }
+
+    var body: some View { RobloOfflineWebView(book: book).id(book) }
+}
+
+private struct RobloOfflineWebView: UIViewRepresentable {
+    let book: RobloPublicBook?
     // WebKit can load a file URL as a script but cannot fetch the Wasm from that
     // file origin. Supply only the verified kw5 module; never grant extra file access.
     private func installLocalWasm(in config: WKWebViewConfiguration, root: URL) {
@@ -57,6 +66,10 @@ struct RobloOfflinePreview: UIViewRepresentable {
         let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("roblo-preview", isDirectory: true)
         installLocalWasm(in: config, root: root)
+        if let book {
+            config.userContentController.addUserScript(WKUserScript(
+                source: book.documentStartScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         let view = WKWebView(frame: .zero, configuration: config)
         let index = root.appendingPathComponent("index.html")
         let rules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}},{"trigger":{"url-filter":"^file:"},"action":{"type":"ignore-previous-rules"}},{"trigger":{"url-filter":"^data:"},"action":{"type":"ignore-previous-rules"}},{"trigger":{"url-filter":"^blob:"},"action":{"type":"ignore-previous-rules"}}]"#
