@@ -18,7 +18,8 @@ mkdir "$app"
 bundle=dev.kilowallet.tests.RobloPreview
 sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
 xcrun swiftc -parse-as-library -swift-version 5 -D DEBUG -sdk "$sdk" -target "$(uname -m)-apple-ios17.0-simulator" \
-  iosApp/iosApp/RobloOfflinePreview.swift "$src/ProbeApp.swift" -o "$app/Preview"
+  iosApp/iosApp/RobloOfflinePreview.swift "$src/ProbeApp.swift" "$src/ProbeBook.swift" -o "$app/Preview"
+cp "$src/book-fixture.js" "$src/book-search.js" "$app/"
 python3 - "$app/Info.plist" "$bundle" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], 'wb') as f:
@@ -62,6 +63,18 @@ if [[ "$passed" != 1 ]]; then
   echo 'Pinned client did not render both Start and Recovery.' >&2
   exit 1
 fi
+# Second launch is the only one that installs the synthetic API fixture. No signing or wallet.
+xcrun simctl terminate "$udid" "$bundle"
+result="$container/tmp/kw-offers-result.json"
+test ! -e "$result"
+xcrun simctl launch "$udid" "$bundle" --offline-book-probe
+for n in {1..100}; do [[ ! -s "$result" ]] || break; sleep 2; done
+test -s "$result"
+cp "$result" "$out/book-result.json"
+xcrun simctl io "$udid" screenshot "$out/offers.png"
+python3 "$src/check-book-result.py" "$out/book-result.json"
+"$tmp/check-screen" "$out/offers.png" "EUR"
+"$tmp/check-screen" "$out/offers.png" "96"
 python3 - "$archive" "$out" "$runtime" "$device" <<'PY'
 import hashlib,json,os,sys
 from pathlib import Path
@@ -70,6 +83,9 @@ sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 receipt={'run':os.environ['GITHUB_RUN_ID'],'attempt':os.environ['GITHUB_RUN_ATTEMPT'],'source':os.environ['GITHUB_SHA'],
          'runtime':runtime,'deviceType':device,'viewSha256':sha('iosApp/iosApp/RobloOfflinePreview.swift'),
          'clientSha256':sha(archive),'screenshotSha256':sha(out/'landing.png'),'visible':['Start','Recovery'],
+         'orderBook':{'fixtureSha256':sha('scripts/roblo-simulator/book-fixture.js'),
+                      'driverSha256':sha('scripts/roblo-simulator/book-search.js'),
+                      'resultSha256':sha(out/'book-result.json'),'screenshotSha256':sha(out/'offers.png')},
          'scope':'isolated simulator preview; no wallet engines linked'}
 (out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
 PY
