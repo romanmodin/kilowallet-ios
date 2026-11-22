@@ -128,7 +128,11 @@ extension RobloPublicBook {
         guard (1...65535).contains(torPort), let url = URL(string: coordinator.endpoint)
         else { throw URLError(.cannotConnectToHost) }
         let config = URLSessionConfiguration.ephemeral
-        config.proxyConfigurations = [TorProxy.configuration(port: torPort, isolation: UUID().uuidString)]
+        guard let port = NWEndpoint.Port(rawValue: UInt16(torPort)) else { throw URLError(.badURL) }
+        var proxy = ProxyConfiguration(socksv5Proxy: .hostPort(host: "127.0.0.1", port: port))
+        proxy.applyCredential(username: UUID().uuidString, password: "kilowallet")
+        proxy.allowFailover = false
+        config.proxyConfigurations = [proxy]
         config.httpShouldSetCookies = false
         config.urlCredentialStorage = nil
         config.urlCache = nil
