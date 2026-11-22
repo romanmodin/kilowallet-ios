@@ -5,7 +5,7 @@ import SwiftUI
 @main
 struct ProbeApp: App {
     var body: some Scene {
-        WindowGroup { RobloOfflinePreview() }
+        WindowGroup { RobloOfflinePreview(book: ProbeBook.fixture).task { await ProbeBook.runIfRequested() } }
     }
 }
 #endif
