@@ -20,7 +20,7 @@ sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
 xcrun swiftc -parse-as-library -swift-version 5 -D ROBLO_BOOK_TESTS \
   iosApp/iosApp/RobloPublicBook.swift "$src/BookChecks.swift" -o "$tmp/check-book"
 "$tmp/check-book" "$src/book-fixture.json" "$tmp/expected-book.js"
-xcrun swiftc -parse-as-library -swift-version 5 -D DEBUG -sdk "$sdk" -target "$(uname -m)-apple-ios17.0-simulator" \
+xcrun swiftc -parse-as-library -swift-version 5 -D DEBUG -D KW_ROBLO_BUNDLED_PREVIEW -sdk "$sdk" -target "$(uname -m)-apple-ios17.0-simulator" \
   iosApp/iosApp/RobloOfflinePreview.swift iosApp/iosApp/RobloPublicBook.swift "$src/ProbeApp.swift" "$src/ProbeBook.swift" -o "$app/Preview"
 cp "$src/book-fixture.json" "$src/book-access.js" "$src/book-search.js" "$app/"
 python3 - "$app/Info.plist" "$bundle" <<'PY'
@@ -33,6 +33,34 @@ with open(sys.argv[1], 'wb') as f:
                        CFBundleSupportedPlatforms=['iPhoneSimulator'], UILaunchScreen={},
                        UIApplicationSceneManifest={'UIApplicationSupportsMultipleScenes':False}), f)
 PY
+# Build a separate offline arm64 product without wallet frameworks or test fixtures.
+device_app="$tmp/device/Preview.app"
+mkdir -p "$device_app"
+xcrun --sdk iphoneos swiftc -parse-as-library -swift-version 5 -D KW_ROBLO_BUNDLED_PREVIEW \
+  -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" -target arm64-apple-ios17.0 \
+  iosApp/iosApp/RobloOfflinePreview.swift iosApp/iosApp/RobloPublicBook.swift "$src/ProbeApp.swift" -o "$device_app/Preview"
+xcrun lipo "$device_app/Preview" -verify_arch arm64
+xcrun vtool -show-build "$device_app/Preview" > "$out/device-platform.txt"
+grep -Eq '^[[:space:]]*platform[[:space:]]+IOS[[:space:]]*$' "$out/device-platform.txt"
+cp "$app/Info.plist" "$device_app/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleSupportedPlatforms:0 iPhoneOS' "$device_app/Info.plist"
+python3 "$src/prepare-resources.py" pack "$archive" "$tmp/packed"
+for product in "$app" "$device_app"; do
+  cp -R "$tmp/packed/RobloClient" "$product/"
+  python3 "$src/prepare-resources.py" verify "$product/RobloClient"
+done
+python3 - "$device_app" "$out/device-build.json" <<'DEVICE'
+import hashlib, json, os, plistlib, sys
+from pathlib import Path
+app, dest = map(Path, sys.argv[1:])
+meta = plistlib.loads((app/'Info.plist').read_bytes())
+assert meta['CFBundleSupportedPlatforms'] == ['iPhoneOS']
+assert set(p.name for p in app.iterdir()) == {'Info.plist', 'Preview', 'RobloClient'}
+dest.write_text(json.dumps(dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
+    bundle=meta['CFBundleIdentifier'], platform='iPhoneOS', arch='arm64',
+    binarySha256=hashlib.sha256((app/'Preview').read_bytes()).hexdigest(),
+    scope='isolated device compilation; no signing credentials or device runtime check'),indent=2)+'\n')
+DEVICE
 xcrun swiftc scripts/check-screen.swift -o "$tmp/check-screen"
 xcrun simctl list -j devices available > "$tmp/devices.json"
 read -r device runtime < <(python3 - "$tmp/devices.json" <<'PY'
@@ -53,8 +81,9 @@ xcrun simctl boot "$udid"
 xcrun simctl bootstatus "$udid" -b
 xcrun simctl install "$udid" "$app"
 container=$(xcrun simctl get_app_container "$udid" "$bundle" data)
-mkdir -p "$container/Documents"
-python3 scripts/stage-roblo-preview.py "$archive" "$container/Documents"
+test ! -e "$container/Documents/roblo-preview"
+installed=$(xcrun simctl get_app_container "$udid" "$bundle" app)
+python3 "$src/prepare-resources.py" verify "$installed/RobloClient"
 xcrun simctl launch "$udid" "$bundle"
 passed=0
 for n in {1..45}; do
@@ -91,6 +120,7 @@ receipt={'run':os.environ['GITHUB_RUN_ID'],'attempt':os.environ['GITHUB_RUN_ATTE
                       'accessProbeSha256':sha('scripts/roblo-simulator/book-access.js'),
                       'driverSha256':sha('scripts/roblo-simulator/book-search.js'),
                       'resultSha256':sha(out/'book-result.json'),'screenshotSha256':sha(out/'offers.png')},
-         'scope':'isolated simulator preview; no wallet engines linked'}
+         'deviceReceiptSha256':sha(out/'device-build.json'),
+         'scope':'isolated simulator, bundled resources; no wallet engines linked'}
 (out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
 PY
