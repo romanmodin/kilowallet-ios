@@ -34,7 +34,15 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         ZStack {
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.environment["KW_ROBLO_PREVIEW"] == "1" {
+                RobloOfflinePreview()
+            } else {
+                ComposeView().ignoresSafeArea(.all)
+            }
+            #else
             ComposeView().ignoresSafeArea(.all)
+            #endif
             if scenePhase != .active {
                 Color.black.ignoresSafeArea()
                 Text("Kilowallet").foregroundColor(.white)

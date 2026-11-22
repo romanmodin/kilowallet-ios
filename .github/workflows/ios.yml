@@ -124,6 +124,9 @@ jobs:
       - name: Boot a simulator, launch the app and take screenshots
         run: ./scripts/ci-screenshots.sh build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app screenshots
 
+      - name: Verify offline WebKit digest and worker on the iPhone simulator
+        run: scripts/check-roblo-webkit.sh build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
+
       - name: Verify live native engine outcomes
         run: python3 scripts/check-runtime.py screenshots-logs
 

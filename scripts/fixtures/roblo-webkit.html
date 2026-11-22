@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{background:white;color:black;font:26px sans-serif;padding:2em}</style>
+<p id="status">Checking offline browser</p>
+<script>
+(async () => {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("abc"));
+  const hex = Array.from(new Uint8Array(bytes), x => x.toString(16).padStart(2, "0")).join("");
+  if (hex !== "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") throw Error("digest");
+  const url = URL.createObjectURL(new Blob(["onmessage = e => postMessage(e.data + 1)"], {type:"text/javascript"}));
+  const worker = new Worker(url);
+  try {
+    const reply = await new Promise((resolve, reject) => {
+      worker.onerror = reject;
+      worker.onmessage = e => resolve(e.data);
+      worker.postMessage(41);
+    });
+    if (reply !== 42) throw Error("worker");
+  } finally { worker.terminate(); URL.revokeObjectURL(url); }
+  document.querySelector("#status").textContent = "Offline browser verified";
+})().catch(() => { document.querySelector("#status").textContent = "Browser probe failed"; });
+</script>
