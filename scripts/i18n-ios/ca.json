@@ -560,5 +560,13 @@
   "no connection through Tor on this platform": "no hi ha connexió per Tor en aquesta plataforma",
   "added": "afegit",
   "testing…": "provant…",
-  "Could not save RPC settings.": "No s’ha pogut desar la configuració RPC."
+  "Could not save RPC settings.": "No s’ha pogut desar la configuració RPC.",
+  "RoboSats offers · Kilobot": "Ofertes de RoboSats · Kilobot",
+  "Browse public offers over Tor. Trading is unavailable in this preview.": "Consulta les ofertes públiques a través de Tor. Aquesta previsualització no permet operar.",
+  "Could not load public offers.": "No s’han pogut carregar les ofertes públiques.",
+  "Kilobot could not be reached or its reply could not be read.": "No s’ha pogut contactar amb Kilobot o llegir-ne la resposta.",
+  "Load public offers": "Carrega les ofertes públiques",
+  "Loading offers…": "S’estan carregant les ofertes…",
+  "Refresh offers": "Actualitza les ofertes",
+  "No public offers found.": "No s’han trobat ofertes públiques."
 }

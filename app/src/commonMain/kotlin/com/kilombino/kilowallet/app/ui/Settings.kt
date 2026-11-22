@@ -368,7 +368,7 @@ private fun KilobotOffers(platform: AppPlatform) {
         if (fixture) platform.markReady("roblo-browse")
     }
     Panel {
-        Text("RoboSats · Kilobot", style = MaterialTheme.typography.bodyMedium, color = TextMain)
+        Text("RoboSats offers · Kilobot", style = MaterialTheme.typography.bodyMedium, color = TextMain)
         Explain("Browse public offers over Tor. Trading is unavailable in this preview.")
         SecondaryButton(if (request == 0) "Load public offers" else "Refresh offers", enabled = !loading) {
             loading = true
