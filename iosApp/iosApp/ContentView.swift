@@ -110,28 +110,32 @@ private struct RobloLiveBookPreview: View {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             probeStage("prepare-directory")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            defer { try? FileManager.default.removeItem(at: root) }
             probeStage("start-tor")
-            guard ArtiEngine.start(dir: root.path, logPath: root.appendingPathComponent("tor.log").path,
-                                   port: port) == nil else { throw URLError(.cannotConnectToHost) }
-            defer { ArtiEngine.stop() }
-            // A bound SOCKS listener can precede a usable Tor circuit by over a minute.
-            probeStage("tor-bootstrap")
-            for _ in 0..<120 {
-                if ArtiEngine.state() != 1 { break }
-                try await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-            guard ArtiEngine.state() == 2 else { throw URLError(.timedOut) }
-            probeStage("fetch-started")
-            do {
-                let snapshot = try await RobloPublicBook.fetch(.kilobot, torPort: port)
-                probeStage("snapshot-validated")
-                return snapshot
-            } catch {
-                let errorInfo = error as NSError
-                let category = errorInfo.domain == NSURLErrorDomain ? "url" : "other"
-                probeStage("fetch-failed-\(category)-\(errorInfo.code)")
-                throw error
+            return try await PreviewTorSession.read(
+                start: { ArtiEngine.start(dir: root.path,
+                                          logPath: root.appendingPathComponent("tor.log").path,
+                                          port: port) == nil },
+                stop: ArtiEngine.stop, idle: { ArtiEngine.state() == 0 },
+                cleanup: { try? FileManager.default.removeItem(at: root) }
+            ) {
+                // A bound SOCKS listener can precede a usable Tor circuit by over a minute.
+                probeStage("tor-bootstrap")
+                for _ in 0..<120 {
+                    if ArtiEngine.state() != 1 { break }
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+                guard ArtiEngine.state() == 2 else { throw URLError(.timedOut) }
+                probeStage("fetch-started")
+                do {
+                    let snapshot = try await RobloPublicBook.fetch(.kilobot, torPort: port)
+                    probeStage("snapshot-validated")
+                    return snapshot
+                } catch {
+                    let errorInfo = error as NSError
+                    let category = errorInfo.domain == NSURLErrorDomain ? "url" : "other"
+                    probeStage("fetch-failed-\(category)-\(errorInfo.code)")
+                    throw error
+                }
             }
         }.value
     }
