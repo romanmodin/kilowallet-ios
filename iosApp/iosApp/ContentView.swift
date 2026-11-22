@@ -69,25 +69,26 @@ private struct RobloLiveBookPreview: View {
     var body: some View {
         VStack {
             Text(message)
-            Button("Load public offers over Tor") {
-                guard !loading else { return }
-                loading = true
-                book = nil
-                message = "Connecting to Kilobot over Tor…"
-                Task {
-                    do {
-                        book = try await Self.loadSnapshot()
-                        message = "Public offers · Kilobot"
-                    } catch {
-                        message = "Kilobot unavailable. Try again."
-                    }
-                    loading = false
-                }
-            }.disabled(loading)
+            Button("Load public offers over Tor") { Task { await loadBook() } }.disabled(loading)
             if let book { RobloOfflinePreview(book: book) }
+        }.task {
+            if ProcessInfo.processInfo.environment["KW_ROBLO_PROBE"] == "1" { await loadBook() }
         }
     }
 
+    @MainActor private func loadBook() async {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        book = nil
+        message = "Connecting to Kilobot over Tor…"
+        do {
+            book = try await Self.loadSnapshot()
+            message = "Public offers · Kilobot"
+        } catch {
+            message = "Kilobot unavailable. Try again."
+        }
+    }
     // This dedicated simulator mode never constructs ComposeView or a wallet bridge.
     // Do not reuse or stop an engine started by another caller.
     private static func loadSnapshot() async throws -> RobloPublicBook {
@@ -101,6 +102,12 @@ private struct RobloLiveBookPreview: View {
             guard ArtiEngine.start(dir: root.path, logPath: root.appendingPathComponent("tor.log").path,
                                    port: port) == nil else { throw URLError(.cannotConnectToHost) }
             defer { ArtiEngine.stop() }
+            // A bound SOCKS listener can precede a usable Tor circuit by over a minute.
+            for _ in 0..<120 {
+                if ArtiEngine.state() != 1 { break }
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            guard ArtiEngine.state() == 2 else { throw URLError(.timedOut) }
             return try await RobloPublicBook.fetch(.kilobot, torPort: port)
         }.value
     }
