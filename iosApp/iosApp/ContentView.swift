@@ -97,11 +97,15 @@ private struct RobloLiveBookPreview: View {
             guard (1...65535).contains(port) else { throw URLError(.cannotConnectToHost) }
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            defer { try? FileManager.default.removeItem(at: root) }
-            guard ArtiEngine.start(dir: root.path, logPath: root.appendingPathComponent("tor.log").path,
-                                   port: port) == nil else { throw URLError(.cannotConnectToHost) }
-            defer { ArtiEngine.stop() }
-            return try await RobloPublicBook.fetch(.kilobot, torPort: port)
+            return try await PreviewTorSession.read(
+                start: { ArtiEngine.start(dir: root.path,
+                                          logPath: root.appendingPathComponent("tor.log").path,
+                                          port: port) == nil },
+                stop: ArtiEngine.stop, idle: { ArtiEngine.state() == 0 },
+                cleanup: { try? FileManager.default.removeItem(at: root) }
+            ) {
+                try await RobloPublicBook.fetch(.kilobot, torPort: port)
+            }
         }.value
     }
 }
