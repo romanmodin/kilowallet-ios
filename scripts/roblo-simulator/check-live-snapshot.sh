@@ -14,7 +14,12 @@ root=$(xcrun simctl get_app_container "$udid" "$bundle" data)/Documents/roblo-pr
 mkdir "$root"
 cleanup() {
   xcrun simctl terminate "$udid" "$bundle" >/dev/null 2>&1 || true
-  rm -f "$root/index.html"
+  if [[ -f "$root/probe-stage.txt" ]]; then
+    cp "$root/probe-stage.txt" "$out/probe-stage.txt"
+    cat "$out/probe-stage.txt"
+    echo
+  fi
+  rm -f "$root/index.html" "$root/probe-stage.txt"
   rmdir "$root"
 }
 trap cleanup EXIT
