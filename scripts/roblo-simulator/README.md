@@ -11,3 +11,11 @@ swiftc -parse-as-library -swift-version 5 -D ROBLO_BOOK_TESTS \
 ```
 
 The existing opt-in simulator job also checks the native view, the two filtered rows, and blocked read/write requests, then captures the displayed book. Only synthetic amounts are used.
+
+To prepare the reviewed kw5 files for a future app resource folder, run
+`python3 scripts/roblo-simulator/prepare-resources.py pack client.zip NEW_OUTPUT`.
+The input is the pinned inner client archive. The command stages it offline,
+applies the existing content policy, checks the complete file tree, and publishes
+`NEW_OUTPUT/RobloClient` only after verification. Recheck a copied folder with
+`python3 scripts/roblo-simulator/prepare-resources.py verify NEW_OUTPUT/RobloClient`.
+No Xcode build phase, network access, or device feature is added by this step.
