@@ -130,10 +130,22 @@ jobs:
         run: ./scripts/ci-screenshots.sh build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app screenshots
 
       - name: Verify offline WebKit digest and worker on the iPhone simulator
+        id: offline_webkit
+        # On the probe branch, a wallet screenshot failure remains fatal but is
+        # independent of offline WebKit. The script checks the installed binary.
+        if: "!cancelled() && steps.simulator_build.outcome == 'success' && (success() || github.head_ref == 'test/roblo-live-simulator-probe')"
         run: scripts/check-roblo-webkit.sh build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
 
       - name: Verify live native engine outcomes
         run: python3 scripts/check-runtime.py screenshots-logs
+
+      - name: Verify the public Kilobot snapshot on the disposable simulator
+        # A failed LND peer connection still fails this job; collect the independent book result.
+        if: "!cancelled() && steps.offline_webkit.outcome == 'success' && github.head_ref == 'test/roblo-live-simulator-probe'"
+        timeout-minutes: 7
+        run: |
+          udid=$(xcrun simctl list devices booted -j | python3 -c 'import sys,json; d=[x["udid"] for rt,ds in json.load(sys.stdin)["devices"].items() if "iOS" in rt for x in ds if x["state"]=="Booted" and x["name"].startswith("iPhone")]; assert len(d)==1; print(d[0])')
+          scripts/roblo-simulator/check-live-snapshot.sh "$udid" build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app screenshots-logs/roblo-live
 
       - uses: actions/upload-artifact@v4
         if: always()
