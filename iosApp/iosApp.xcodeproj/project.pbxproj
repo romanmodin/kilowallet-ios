@@ -354,6 +354,7 @@
 					"$(SRCROOT)/Frameworks/Lndmobile.xcframework/ios-arm64_x86_64-simulator",
 				);
 				INFOPLIST_FILE = iosApp/Info.plist;
+				"INFOPLIST_FILE[sdk=iphonesimulator*]" = Configuration/KilobotSimulator.plist;
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/Frameworks/KilombinoArk.xcframework/ios-arm64",
