@@ -28,7 +28,16 @@ enum BookChecks {
               reply(200, noOrders) == nil, reply(302, input) == nil else {
             throw Failure(detail: "could not distinguish empty market from unavailable coordinator")
         }
+        guard book.offerSummary == "#910001 · 73 USD\n#910002 · 85 USD\n#910003 · 96 EUR",
+              market.offerSummary == "No public offers found." else { throw Failure(detail: "offer display") }
         var row = rows[0]
+        row["amount"] = "73 USD\nspoofed"
+        guard try snapshot([row])?.offerSummary == "#910001 · USD" else { throw Failure(detail: "untrusted display") }
+        row = rows[0]; row["sats_denominated"] = true
+        guard try snapshot([row])?.offerSummary == "#910001 · USD" else { throw Failure(detail: "sats labeled fiat") }
+        row = rows[0]; row["has_range"] = true; row["min_amount"] = "10"; row["max_amount"] = "25.50"
+        guard try snapshot([row])?.offerSummary == "#910001 · 10–25.50 USD" else { throw Failure(detail: "range display") }
+        row = rows[0]
         row["sample_private_field"] = "synthetic value"
         try reject("private field", [row])
         row = rows[0]; row["maker_nick"] = ["nested": "synthetic"]

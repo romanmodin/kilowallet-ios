@@ -38,6 +38,37 @@ final class Bridge: NSObject, IosBridge {
         if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid }
     }
 
+    func kilobotBrowseAvailable() -> Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        if #available(iOS 17, *) { return true }
+        #endif
+        return false
+    }
+
+    func kilobotOffers(socksPort: Int32, completion: @escaping (String?) -> Void) {
+        #if DEBUG && targetEnvironment(simulator)
+        if #available(iOS 17, *), (1...65535).contains(socksPort) {
+            Task { @MainActor in
+                let book = try? await RobloPublicBook.fetch(.kilobot, torPort: socksPort)
+                completion(book?.offerSummary)
+            }
+            return
+        }
+        #endif
+        completion(nil)
+    }
+
+    func kilobotFixtureOffers() -> String? {
+        #if DEBUG && targetEnvironment(simulator)
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        guard let data = try? Data(contentsOf: docs.appendingPathComponent("kw-public-book-fixture.json"))
+        else { return nil }
+        return RobloPublicBook(coordinator: .kilobot, publicJSON: data)?.offerSummary
+        #else
+        return nil
+        #endif
+    }
+
     // MARK: Keychain
 
     func keychainSave(walletId: String, secret: String) -> String? { Keychain.save(walletId: walletId, secret: secret) }

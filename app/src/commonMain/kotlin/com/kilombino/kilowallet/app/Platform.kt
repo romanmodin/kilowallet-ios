@@ -88,6 +88,9 @@ internal class EnginePrefs(private val base: Prefs, private val id: String) : Pr
     override fun put(key: String, value: String?) = base.put("engine.$id.$key", value)
 }
 interface AppPlatform {
+    val canBrowseKilobot: Boolean get() = false
+    /** One public snapshot; null means unavailable, never an empty market. */
+    suspend fun readKilobotOffers(): String? = null
     fun forEngineWallet(id: String): AppPlatform = this
     val seeds: SeedStore
     val prefs: Prefs
