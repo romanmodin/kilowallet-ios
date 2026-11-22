@@ -5,7 +5,12 @@ import KilowalletApp
 /// Hosts the Compose UI (shared Kotlin, `app/src/commonMain`) and hands it the Swift services.
 struct ComposeView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIViewController {
-        MainViewControllerKt.MainViewController(bridge: Bridge.shared, demo: Self.demoScreen())
+        #if KW_KILOBOT_DEVICE_QA
+        precondition(Bundle.main.bundleIdentifier == "dev.kilowallet.tests.KilobotBook")
+        return MainViewControllerKt.kilobotDevicePreview(bridge: Bridge.shared)
+        #else
+        return MainViewControllerKt.MainViewController(bridge: Bridge.shared, demo: Self.demoScreen())
+        #endif
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
@@ -44,6 +49,8 @@ struct ContentView: View {
             } else {
                 ComposeView().ignoresSafeArea(.all)
             }
+            #elseif KW_KILOBOT_DEVICE_QA
+            ComposeView()
             #else
             ComposeView().ignoresSafeArea(.all)
             #endif

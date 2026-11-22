@@ -27,11 +27,11 @@ import platform.posix.memcpy
 class IosPlatform(private val bridge: IosBridge, override val demoScreen: String?) : AppPlatform {
 
     override val canBrowseKilobot: Boolean
-        get() = bridge.kilobotBrowseAvailable() && (demoScreen == null || demoScreen == "roblo-browse")
+        get() = bridge.kilobotBrowseAvailable() && (demoScreen == null || demoScreen == "roblo-browse" || demoScreen == KILOBOT_DEVICE_QA)
 
     override suspend fun readKilobotOffers(): String? {
         if (!canBrowseKilobot) return null
-        if (demoScreen != null) return bridge.kilobotFixtureOffers()
+        if (demoScreen == "roblo-browse") return bridge.kilobotFixtureOffers()
         val port = Tor.startAndWait(120_000) ?: return null
         if (port !in 1..65535) return null
         return suspendCancellableCoroutine { continuation ->
@@ -212,7 +212,8 @@ class IosPlatform(private val bridge: IosBridge, override val demoScreen: String
 }
 
 /** Screenshot demos that run the real Tor. */
-private val TOR_DEMOS = setOf("ln-live", "tor-live", "tor-log", "jb-live")
+internal const val KILOBOT_DEVICE_QA = "kilobot-device-qa"
+private val TOR_DEMOS = setOf(KILOBOT_DEVICE_QA, "ln-live", "tor-live", "tor-log", "jb-live")
 
 @OptIn(ExperimentalForeignApi::class)
 private fun NSData.toByteArray(): ByteArray {

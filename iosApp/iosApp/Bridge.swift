@@ -14,6 +14,7 @@ final class Bridge: NSObject, IosBridge {
 
     private override init() {
         super.init()
+        #if !KW_KILOBOT_DEVICE_QA
         // Remove this app's abandoned export files after an interrupted share or process exit.
         let fm = FileManager.default
         if let entries = try? fm.contentsOfDirectory(at: fm.temporaryDirectory, includingPropertiesForKeys: nil) {
@@ -32,6 +33,7 @@ final class Bridge: NSObject, IosBridge {
         nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.endBackgroundTask()
         }
+        #endif
     }
 
     private func endBackgroundTask() {
@@ -39,14 +41,14 @@ final class Bridge: NSObject, IosBridge {
     }
 
     func kilobotBrowseAvailable() -> Bool {
-        #if DEBUG && targetEnvironment(simulator)
+        #if KW_KILOBOT_DEVICE_QA || (DEBUG && targetEnvironment(simulator))
         if #available(iOS 17, *) { return true }
         #endif
         return false
     }
 
     func kilobotOffers(socksPort: Int32, completion: @escaping (String?) -> Void) {
-        #if DEBUG && targetEnvironment(simulator)
+        #if KW_KILOBOT_DEVICE_QA || (DEBUG && targetEnvironment(simulator))
         if #available(iOS 17, *), (1...65535).contains(socksPort) {
             Task { @MainActor in
                 let book = try? await RobloPublicBook.fetch(.kilobot, torPort: socksPort)

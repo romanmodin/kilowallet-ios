@@ -349,7 +349,7 @@ private fun SettingRow(title: String, explain: String, control: @Composable () -
 
 /** Public data only. The screen owns the request state; no order is stored with a wallet. */
 @Composable
-private fun KilobotOffers(platform: AppPlatform) {
+internal fun KilobotOffers(platform: AppPlatform) {
     val fixture = platform.demoScreen == "roblo-browse"
     var request by remember(platform) { mutableStateOf(if (fixture) 1 else 0) }
     var loading by remember(platform) { mutableStateOf(fixture) }

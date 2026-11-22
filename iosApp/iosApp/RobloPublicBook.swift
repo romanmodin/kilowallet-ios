@@ -1,4 +1,4 @@
-#if (DEBUG && targetEnvironment(simulator)) || ROBLO_BOOK_TESTS || KW_ROBLO_BUNDLED_PREVIEW
+#if KW_KILOBOT_DEVICE_QA || (DEBUG && targetEnvironment(simulator)) || ROBLO_BOOK_TESTS || KW_ROBLO_BUNDLED_PREVIEW
 import Foundation
 
 // A single snapshot of a public coordinator book. No wallet or HTTP client is accepted here.
@@ -138,7 +138,7 @@ struct RobloPublicBook: Hashable {
 }
 #endif
 
-#if DEBUG && targetEnvironment(simulator) && !ROBLO_BOOK_TESTS
+#if (KW_KILOBOT_DEVICE_QA || (DEBUG && targetEnvironment(simulator))) && !ROBLO_BOOK_TESTS
 import Network
 
 @available(iOS 17.0, *)
