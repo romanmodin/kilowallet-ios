@@ -1,4 +1,4 @@
-#if (DEBUG && targetEnvironment(simulator)) || ROBLO_BOOK_TESTS
+#if (DEBUG && targetEnvironment(simulator)) || ROBLO_BOOK_TESTS || KW_ROBLO_BUNDLED_PREVIEW
 import Foundation
 
 // A single snapshot of a public coordinator book. No wallet or HTTP client is accepted here.

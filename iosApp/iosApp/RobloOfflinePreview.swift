@@ -1,9 +1,9 @@
-#if DEBUG && targetEnvironment(simulator)
+#if (DEBUG && targetEnvironment(simulator)) || KW_ROBLO_BUNDLED_PREVIEW
 import SwiftUI
 import WebKit
 import CryptoKit
 
-// Simulator-only compatibility probe. Never attach Bridge.shared to this page.
+// Isolated compatibility preview. Never attach Bridge.shared to this page.
 struct RobloOfflinePreview: View {
     // Each new snapshot gets its own ephemeral store and freshly installed content rules.
     let book: RobloPublicBook?
@@ -63,8 +63,12 @@ private struct RobloOfflineWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        #if KW_ROBLO_BUNDLED_PREVIEW
+        let root = Bundle.main.bundleURL.appendingPathComponent("RobloClient", isDirectory: true)
+        #else
         let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("roblo-preview", isDirectory: true)
+        #endif
         installLocalWasm(in: config, root: root)
         if let book {
             config.userContentController.addUserScript(WKUserScript(
@@ -78,7 +82,7 @@ private struct RobloOfflineWebView: UIViewRepresentable {
         ) { list, error in
             guard error == nil, let list = list,
                   FileManager.default.fileExists(atPath: index.path) else {
-                view.loadHTMLString("<p>Offline preview unavailable. Stage the pinned client first.</p>", baseURL: nil)
+                view.loadHTMLString("<p>Offline preview unavailable.</p>", baseURL: nil)
                 return
             }
             context.coordinator.entry = index

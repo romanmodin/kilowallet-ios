@@ -21,7 +21,9 @@ enum ProbeBook {
             for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
                 for window in scene.windows where !window.isHidden {
                     if let web = findWebView(window), web.url?.isFileURL == true,
-                       web.url?.lastPathComponent == "index.html", !web.isLoading { return web }
+                       web.url?.resolvingSymlinksInPath().standardizedFileURL ==
+                       Bundle.main.bundleURL.appendingPathComponent("RobloClient/index.html")
+                        .resolvingSymlinksInPath().standardizedFileURL, !web.isLoading { return web }
                 }
             }
             try await Task.sleep(nanoseconds: 200_000_000)
