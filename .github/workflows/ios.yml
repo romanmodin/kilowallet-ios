@@ -126,6 +126,9 @@ jobs:
 
       - name: Verify offline WebKit digest and worker on the iPhone simulator
         id: offline_webkit
+        # On the probe branch, a wallet screenshot failure remains fatal but is
+        # independent of offline WebKit. The script checks the installed binary.
+        if: "!cancelled() && steps.simulator_build.outcome == 'success' && (success() || github.head_ref == 'test/roblo-live-simulator-probe')"
         run: scripts/check-roblo-webkit.sh build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app
 
       - name: Verify live native engine outcomes

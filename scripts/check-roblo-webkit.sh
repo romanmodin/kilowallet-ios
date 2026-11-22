@@ -8,6 +8,9 @@ udid=$(xcrun simctl list devices booted -j | python3 -c 'import json,sys
 ids=[x["udid"] for k,v in json.load(sys.stdin)["devices"].items() if "iOS" in k for x in v if x["state"]=="Booted" and x["name"].startswith("iPhone")]
 assert len(ids)==1, ids
 print(ids[0])')
+installed=$(xcrun simctl get_app_container "$udid" "$bundle" app)
+cmp "$app/Kilowallet" "$installed/Kilowallet"
+test -x build/check-screen
 docs=$(xcrun simctl get_app_container "$udid" "$bundle" data)/Documents
 root="$docs/roblo-preview"
 mkdir "$root" # refuse to replace any prior client
