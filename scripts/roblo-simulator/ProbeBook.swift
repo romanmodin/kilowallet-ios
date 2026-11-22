@@ -40,7 +40,7 @@ enum ProbeBook {
         guard ProcessInfo.processInfo.arguments.contains("--offline-book-probe"),
               let url = Bundle.main.url(forResource: "book-fixture", withExtension: "json"),
               let data = try? Data(contentsOf: url) else { return nil }
-        return RobloPublicBook(coordinator: .kilobot, publicJSON: data)
+        return RobloPublicBook(coordinator: .kilobot, status: 200, response: data)
     }()
 
     static func runIfRequested() async {

@@ -39,6 +39,21 @@ struct RobloPublicBook: Hashable {
         let payment_method: String
     }
 
+    // The pinned coordinators return this precise 404 object for an empty market.
+    // A missing route, proxy failure or other error must never look like an empty book.
+    init?(coordinator: Coordinator, status: Int, response: Data) {
+        switch status {
+        case 200:
+            self.init(coordinator: coordinator, publicJSON: response)
+        case 404:
+            guard response.count <= 1024,
+                  let error = (try? JSONSerialization.jsonObject(with: response)) as? [String: String],
+                  error == ["not_found": "No orders found, be the first to make one"] else { return nil }
+            self.init(coordinator: coordinator, publicJSON: Data("[]".utf8))
+        default: return nil
+        }
+    }
+
     init?(coordinator: Coordinator, publicJSON: Data) {
         guard publicJSON.count <= Self.limit,
               let rows = (try? JSONSerialization.jsonObject(with: publicJSON)) as? [[String: Any]],

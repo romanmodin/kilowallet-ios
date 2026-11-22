@@ -18,6 +18,16 @@ enum BookChecks {
         }
         let empty: [[String: Any]] = []
         guard try snapshot(empty) != nil else { throw Failure(detail: "empty public book rejected") }
+        let noOrders = Data(#"{"not_found":"No orders found, be the first to make one"}"#.utf8)
+        func reply(_ status: Int, _ data: Data) -> RobloPublicBook? {
+            RobloPublicBook(coordinator: .kilobot, status: status, response: data)
+        }
+        guard let market = reply(404, noOrders), market == (try snapshot(empty)),
+              reply(200, input) == book, reply(503, noOrders) == nil,
+              reply(404, Data("not found".utf8)) == nil, reply(404, input) == nil,
+              reply(200, noOrders) == nil, reply(302, input) == nil else {
+            throw Failure(detail: "could not distinguish empty market from unavailable coordinator")
+        }
         var row = rows[0]
         row["sample_private_field"] = "synthetic value"
         try reject("private field", [row])
