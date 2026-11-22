@@ -121,6 +121,20 @@ jobs:
             > build/xcodebuild.log 2>&1
           test -x build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app/Kilowallet
 
+      - name: Compile the isolated wallet offers panel for iPhone hardware
+        if: github.head_ref == 'test/roblo-device-wallet'
+        run: bash scripts/roblo-simulator/build-device-wallet.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always() && github.head_ref == 'test/roblo-device-wallet'
+        with:
+          name: kilobot-device-wallet-build
+          path: |
+            build/kilobot-device-unsigned.zip
+            build/kilobot-device-receipt.json
+            build/kilobot-device-build.log
+          if-no-files-found: error
+
       - name: Boot a simulator, launch the app and take screenshots
         run: ./scripts/ci-screenshots.sh build/dd/Build/Products/Debug-iphonesimulator/Kilowallet.app screenshots
 
