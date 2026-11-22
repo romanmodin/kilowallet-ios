@@ -108,3 +108,53 @@ struct RobloPublicBook: Hashable {
     """#
 }
 #endif
+
+#if DEBUG && targetEnvironment(simulator) && !ROBLO_BOOK_TESTS
+import Network
+
+@available(iOS 17.0, *)
+private final class RobloNoRedirect: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+@available(iOS 17.0, *)
+extension RobloPublicBook {
+    static func fetch(_ coordinator: Coordinator, torPort: Int32) async throws -> Self {
+        guard (1...65535).contains(torPort), let url = URL(string: coordinator.endpoint)
+        else { throw URLError(.cannotConnectToHost) }
+        let config = URLSessionConfiguration.ephemeral
+        guard let port = NWEndpoint.Port(rawValue: UInt16(torPort)) else { throw URLError(.badURL) }
+        var proxy = ProxyConfiguration(socksv5Proxy: .hostPort(host: "127.0.0.1", port: port))
+        proxy.applyCredential(username: UUID().uuidString, password: "kilowallet")
+        proxy.allowFailover = false
+        config.proxyConfigurations = [proxy]
+        config.httpShouldSetCookies = false
+        config.urlCredentialStorage = nil
+        config.urlCache = nil
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 45
+        let session = URLSession(configuration: config, delegate: RobloNoRedirect(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (stream, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, http.url == url,
+              [200, 404].contains(http.statusCode) else { throw URLError(.badServerResponse) }
+        let cap = http.statusCode == 404 ? 1024 : Self.limit
+        guard response.expectedContentLength <= Int64(cap) else { throw URLError(.dataLengthExceedsMaximum) }
+        var body = Data()
+        for try await byte in stream {
+            guard body.count < cap else { throw URLError(.dataLengthExceedsMaximum) }
+            body.append(byte)
+        }
+        guard let book = Self(coordinator: coordinator, status: http.statusCode, response: body)
+        else { throw URLError(.cannotParseResponse) }
+        return book
+    }
+}
+#endif
