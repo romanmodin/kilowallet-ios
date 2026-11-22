@@ -3023,5 +3023,13 @@
   "no connection through Tor on this platform": "não há ligação por Tor nesta plataforma",
   "added": "adicionado",
   "testing…": "a testar…",
-  "Could not save RPC settings.": "Não foi possível guardar as definições RPC."
+  "Could not save RPC settings.": "Não foi possível guardar as definições RPC.",
+  "RoboSats offers · Kilobot": "Ofertas da RoboSats · Kilobot",
+  "Browse public offers over Tor. Trading is unavailable in this preview.": "Consulte as ofertas públicas através do Tor. Não é possível negociar nesta prévia.",
+  "Could not load public offers.": "Não foi possível carregar as ofertas públicas.",
+  "Kilobot could not be reached or its reply could not be read.": "Não foi possível contactar o Kilobot ou ler a resposta.",
+  "Load public offers": "Carregar ofertas públicas",
+  "Loading offers…": "A carregar ofertas…",
+  "Refresh offers": "Atualizar ofertas",
+  "No public offers found.": "Nenhuma oferta pública encontrada."
 }

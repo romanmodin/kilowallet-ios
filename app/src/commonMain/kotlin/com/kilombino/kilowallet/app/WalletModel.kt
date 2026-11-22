@@ -1759,6 +1759,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     "home" -> scan()
                     "immature" -> scan()
                     "receive", "request" -> { go(Screen.Receive); platform.markReady(screen) }
+                    "roblo-browse" -> go(Screen.Settings) // The fixture signals after reading the snapshot.
                     "settings" -> { go(Screen.Settings); platform.markReady(screen) }
                     "lightning" -> { selectTab(Tab.LIGHTNING); platform.markReady(screen) }
                     "ln-bridge" -> {

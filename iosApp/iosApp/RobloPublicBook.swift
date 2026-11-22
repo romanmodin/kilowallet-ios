@@ -20,6 +20,28 @@ struct RobloPublicBook: Hashable {
 
     let coordinator: Coordinator
     private let encoded: String
+    let offerSummary: String
+
+    // Display only numeric identifiers and decimal strings. No nicknames, links or free text.
+    private static func amount(_ value: Any?) -> String? {
+        guard let text = value as? String, (1...24).contains(text.utf8.count) else { return nil }
+        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count <= 2, parts.allSatisfy({ !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) } })
+        else { return nil }
+        return text
+    }
+
+    private static func display(_ head: RowHead, _ row: [String: Any]) -> String {
+        let currency = [1: "USD", 2: "EUR"][head.currency] ?? "Currency \(head.currency)"
+        let prefix = "#\(head.id) · "
+        // Never interpret a sats-denominated order as a fiat amount.
+        if let value = row["sats_denominated"], (value as? Bool) != false { return prefix + currency }
+        if head.has_range, let low = amount(row["min_amount"]), let high = amount(row["max_amount"]) {
+            return prefix + low + "–" + high + " " + currency
+        }
+        if !head.has_range, let fixed = amount(row["amount"]) { return prefix + fixed + " " + currency }
+        return prefix + currency
+    }
     private static let limit = 262_144
     // PublicOrder fields actually consumed by the pinned client. Third-party links and
     // unknown extensions require review. No arbitrary object or private response is forwarded.
@@ -74,6 +96,13 @@ struct RobloPublicBook: Hashable {
         for h in heads {
             guard h.id > 0, h.id <= 9_007_199_254_740_991, ids.insert(h.id).inserted,
                   (h.type == 0 || h.type == 1), h.currency > 0 else { return nil }
+        }
+        if heads.isEmpty {
+            offerSummary = "No public offers found."
+        } else {
+            var lines = zip(heads.prefix(20), rows.prefix(20)).map { Self.display($0.0, $0.1) }
+            if heads.count > 20 { lines.append("Showing 20 of \(heads.count) offers.") }
+            offerSummary = lines.joined(separator: "\n")
         }
         self.coordinator = coordinator
         encoded = clean.base64EncodedString()
