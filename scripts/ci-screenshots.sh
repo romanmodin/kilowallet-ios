@@ -56,6 +56,10 @@ capture_failure_diagnostics() {
   local pid
   pid=$(awk -F': ' 'NF == 2 { print $2 }' "screenshots-logs/$name.launch" | tail -1)
   if [[ "$pid" =~ ^[0-9]+$ ]]; then
+    # A simulator process can exit before sample attaches. Keep only the
+    # exit classification for this launch, never a raw IPS or its backtrace.
+    python3 scripts/capture-simulator-exit.py "$BUNDLE" "$pid" "$UDID" "$launch_epoch" \
+      >"screenshots-logs/$name.$phase.exit.json" || true
     sample "$pid" 5 -file "screenshots-logs/$name.$phase.sample.txt" || true
   fi
   xcrun simctl spawn "$UDID" log show --last 3m --style compact     --predicate 'process == "Kilowallet"' >"screenshots-logs/$name.$phase.system.log" 2>&1 || true
@@ -77,8 +81,27 @@ for screen in welcome history create restore watch home simple lightning ln-star
   # teardown can race the following launch. Keep each app's own stdout/stderr.
   log="$PWD/screenshots-logs/$name.log"
   capture_launched=1
-  SIMCTL_CHILD_KW_DEMO="$screen" xcrun simctl launch --terminate-running-process \
-    --stdout="$log" --stderr="$PWD/screenshots-logs/$name.stderr" "$UDID" "$BUNDLE" | tee "screenshots-logs/$name.launch"
+  # Capture the launch command itself: app stdout/stderr may both be empty.
+  # Retry once only for a simulator timeout with no PID and no app marker.
+  for launch_attempt in 1 2; do
+    launch_epoch=$(date +%s)
+    launch_out="screenshots-logs/$name.$launch_attempt.launch"
+    launch_err="screenshots-logs/$name.$launch_attempt.launch-stderr"
+    launch_status=0
+    SIMCTL_CHILD_KW_DEMO="$screen" xcrun simctl launch --terminate-running-process \
+      --stdout="$log" --stderr="$PWD/screenshots-logs/$name.stderr" "$UDID" "$BUNDLE" \
+      >"$launch_out" 2>"$launch_err" || launch_status=$?
+    cp "$launch_out" "screenshots-logs/$name.launch"
+    if [ "$launch_status" -eq 0 ]; then break; fi
+    echo "$screen: simulator launch attempt $launch_attempt failed ($launch_status)"
+    if [ "$launch_attempt" -eq 1 ] && ! grep -Eq ': [0-9]+$' "$launch_out" &&
+       [ ! -e "$DATA/Documents/kw-demo-selected" ] &&
+       grep -Eiq 'timed out|timeout' "$launch_err"; then
+      sleep 3
+      continue
+    fi
+    exit "$launch_status"
+  done
   # Hosted Intel simulators can be slow before SwiftUI is constructed. Keep this
   # separate from the unchanged deadline for preparing the requested screen.
   selected=""

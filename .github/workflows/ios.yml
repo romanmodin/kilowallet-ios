@@ -24,6 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check simulator preview Tor shutdown and immediate retry
+        run: |
+          swiftc -D PREVIEW_TOR_TEST iosApp/iosApp/PreviewTorSession.swift scripts/roblo-simulator/PreviewTorSessionChecks.swift -o "$RUNNER_TEMP/check-preview-tor"
+          "$RUNNER_TEMP/check-preview-tor"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

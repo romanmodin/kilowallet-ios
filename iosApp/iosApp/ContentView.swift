@@ -36,7 +36,11 @@ struct ContentView: View {
         ZStack {
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.environment["KW_ROBLO_PREVIEW"] == "1" {
-                RobloOfflinePreview()
+                if #available(iOS 17, *), ProcessInfo.processInfo.environment["KW_ROBLO_LIVE_BOOK"] == "1" {
+                    RobloLiveBookPreview()
+                } else {
+                    RobloOfflinePreview()
+                }
             } else {
                 ComposeView().ignoresSafeArea(.all)
             }
@@ -54,3 +58,55 @@ struct ContentView: View {
         }
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+@available(iOS 17, *)
+private struct RobloLiveBookPreview: View {
+    @State private var book: RobloPublicBook?
+    @State private var message = "Public offers · Kilobot"
+    @State private var loading = false
+
+    var body: some View {
+        VStack {
+            Text(message)
+            Button("Load public offers over Tor") {
+                guard !loading else { return }
+                loading = true
+                book = nil
+                message = "Connecting to Kilobot over Tor…"
+                Task {
+                    do {
+                        book = try await Self.loadSnapshot()
+                        message = "Public offers · Kilobot"
+                    } catch {
+                        message = "Kilobot unavailable. Try again."
+                    }
+                    loading = false
+                }
+            }.disabled(loading)
+            if let book { RobloOfflinePreview(book: book) }
+        }
+    }
+
+    // This dedicated simulator mode never constructs ComposeView or a wallet bridge.
+    // Do not reuse or stop an engine started by another caller.
+    private static func loadSnapshot() async throws -> RobloPublicBook {
+        try await Task.detached(priority: .userInitiated) {
+            guard ArtiEngine.state() == 0 else { throw URLError(.cannotConnectToHost) }
+            let port = ArtiEngine.freePort()
+            guard (1...65535).contains(port) else { throw URLError(.cannotConnectToHost) }
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            return try await PreviewTorSession.read(
+                start: { ArtiEngine.start(dir: root.path,
+                                          logPath: root.appendingPathComponent("tor.log").path,
+                                          port: port) == nil },
+                stop: ArtiEngine.stop, idle: { ArtiEngine.state() == 0 },
+                cleanup: { try? FileManager.default.removeItem(at: root) }
+            ) {
+                try await RobloPublicBook.fetch(.kilobot, torPort: port)
+            }
+        }.value
+    }
+}
+#endif

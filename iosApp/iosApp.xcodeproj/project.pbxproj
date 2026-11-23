@@ -11,6 +11,7 @@
 		8C24DF3C6F8D8C3DF2172AB5 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87BD7A0AA721718E96D130B1 /* ContentView.swift */; };
 		2657B1D070ED47C2A61CB1B0 /* RobloOfflinePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 631701C556FE4EF489E597B3 /* RobloOfflinePreview.swift */; };
 		B8200688E1304541AB5D9CB4 /* RobloPublicBook.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED31305C4FCD45E289991743 /* RobloPublicBook.swift */; };
+		94F513AC7E2C458297AD1B47 /* PreviewTorSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86BD5ADBCF2848D4B3710E3A /* PreviewTorSession.swift */; };
 		97229F7A1A6BE1044726833E /* Bridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A8FA1AD56754D6005D93FB9 /* Bridge.swift */; };
 		C0FFEE000000000000000A01 /* LndmobileEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE000000000000000A02 /* LndmobileEngine.swift */; };
 		C0FFEE000000000000000A03 /* ArkEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE000000000000000A04 /* ArkEngine.swift */; };
@@ -33,6 +34,7 @@
 		87BD7A0AA721718E96D130B1 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		631701C556FE4EF489E597B3 /* RobloOfflinePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobloOfflinePreview.swift; sourceTree = "<group>"; };
 		ED31305C4FCD45E289991743 /* RobloPublicBook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobloPublicBook.swift; sourceTree = "<group>"; };
+		86BD5ADBCF2848D4B3710E3A /* PreviewTorSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewTorSession.swift; sourceTree = "<group>"; };
 		9A8FA1AD56754D6005D93FB9 /* Bridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bridge.swift; sourceTree = "<group>"; };
 		C0FFEE000000000000000A02 /* LndmobileEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LndmobileEngine.swift; sourceTree = "<group>"; };
 		C0FFEE000000000000000A04 /* ArkEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArkEngine.swift; sourceTree = "<group>"; };
@@ -109,6 +111,7 @@
 				87BD7A0AA721718E96D130B1 /* ContentView.swift */,
 				631701C556FE4EF489E597B3 /* RobloOfflinePreview.swift */,
 				ED31305C4FCD45E289991743 /* RobloPublicBook.swift */,
+				86BD5ADBCF2848D4B3710E3A /* PreviewTorSession.swift */,
 				9A8FA1AD56754D6005D93FB9 /* Bridge.swift */,
 				C0FFEE000000000000000A02 /* LndmobileEngine.swift */,
 				C0FFEE000000000000000A04 /* ArkEngine.swift */,
@@ -250,6 +253,7 @@
 				8C24DF3C6F8D8C3DF2172AB5 /* ContentView.swift in Sources */,
 				2657B1D070ED47C2A61CB1B0 /* RobloOfflinePreview.swift in Sources */,
 				B8200688E1304541AB5D9CB4 /* RobloPublicBook.swift in Sources */,
+				94F513AC7E2C458297AD1B47 /* PreviewTorSession.swift in Sources */,
 				97229F7A1A6BE1044726833E /* Bridge.swift in Sources */,
 				C0FFEE000000000000000A01 /* LndmobileEngine.swift in Sources */,
 				C0FFEE000000000000000A03 /* ArkEngine.swift in Sources */,
