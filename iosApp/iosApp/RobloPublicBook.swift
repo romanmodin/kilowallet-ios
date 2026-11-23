@@ -131,19 +131,24 @@ extension RobloPublicBook {
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (stream, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, http.url == url,
-              [200, 404].contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        let cap = http.statusCode == 404 ? 1024 : Self.limit
-        guard response.expectedContentLength <= Int64(cap) else { throw URLError(.dataLengthExceedsMaximum) }
-        var body = Data()
-        for try await byte in stream {
-            guard body.count < cap else { throw URLError(.dataLengthExceedsMaximum) }
-            body.append(byte)
-        }
-        guard let book = Self(coordinator: coordinator, status: http.statusCode, response: body)
-        else { throw URLError(.cannotParseResponse) }
-        return book
+        return try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            let (stream, response) = try await session.bytes(for: request)
+            guard let http = response as? HTTPURLResponse, http.url == url,
+                  [200, 404].contains(http.statusCode) else { throw URLError(.badServerResponse) }
+            let cap = http.statusCode == 404 ? 1024 : Self.limit
+            guard response.expectedContentLength <= Int64(cap) else { throw URLError(.dataLengthExceedsMaximum) }
+            var body = Data()
+            for try await byte in stream {
+                guard body.count < cap else { throw URLError(.dataLengthExceedsMaximum) }
+                body.append(byte)
+            }
+            guard let book = Self(coordinator: coordinator, status: http.statusCode, response: body)
+            else { throw URLError(.cannotParseResponse) }
+            return book
+        }, onCancel: {
+            session.invalidateAndCancel()
+        })
     }
 }
 #endif

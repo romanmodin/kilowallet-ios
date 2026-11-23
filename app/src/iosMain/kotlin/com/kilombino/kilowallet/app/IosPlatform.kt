@@ -11,8 +11,6 @@ import com.kilombino.kilowallet.core.kilojoin.WebSocket
 import com.kilombino.kilowallet.core.kilojoin.WebSocketFactory
 import com.kilombino.kilowallet.core.kilojoin.WebSocketListener
 import com.kilombino.kilowallet.core.tor.Tor
-import kotlin.coroutines.resume
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.runBlocking
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSOperationQueue
@@ -34,9 +32,7 @@ class IosPlatform(private val bridge: IosBridge, override val demoScreen: String
         if (demoScreen != null) return bridge.kilobotFixtureOffers()
         val port = Tor.startAndWait(120_000) ?: return null
         if (port !in 1..65535) return null
-        return suspendCancellableCoroutine { continuation ->
-            bridge.kilobotOffers(port) { summary -> continuation.resume(summary) }
-        }
+        return awaitKilobotOffers { complete -> bridge.kilobotOffers(port, complete) }
     }
 
     override val seeds: SeedStore = if (demoScreen != null) MemorySeedStore() else object : SeedStore {

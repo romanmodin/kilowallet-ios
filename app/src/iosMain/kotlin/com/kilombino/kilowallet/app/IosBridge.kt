@@ -9,7 +9,7 @@ import platform.Foundation.NSData
  */
 interface IosBridge {
     fun kilobotBrowseAvailable(): Boolean
-    fun kilobotOffers(socksPort: Int, completion: (String?) -> Unit)
+    fun kilobotOffers(socksPort: Int, completion: (String?) -> Unit): KilobotRequest?
     fun kilobotFixtureOffers(): String?
     /** Store the secret in the Keychain behind user presence; returns an error message or null. */
     fun keychainSave(walletId: String, secret: String): String?

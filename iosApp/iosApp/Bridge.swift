@@ -4,6 +4,12 @@ import LocalAuthentication
 import AVFoundation
 import KilowalletApp
 
+private final class KilobotRequestHandle: NSObject, KilobotRequest {
+    private let task: Task<Void, Never>
+    init(_ task: Task<Void, Never>) { self.task = task }
+    func cancel() { task.cancel() }
+}
+
 /// The platform services the shared Kotlin code asks for (see app/src/iosMain/.../IosBridge.kt).
 final class Bridge: NSObject, IosBridge {
     static let shared = Bridge()
@@ -43,15 +49,18 @@ final class Bridge: NSObject, IosBridge {
         return false
     }
 
-    func kilobotOffers(socksPort: Int32, completion: @escaping (String?) -> Void) {
-        if #available(iOS 17, *), (1...65535).contains(socksPort) {
-            Task { @MainActor in
-                let book = try? await RobloPublicBook.fetch(.kilobot, torPort: socksPort)
-                completion(book?.offerSummary)
-            }
-            return
+    func kilobotOffers(socksPort: Int32, completion: @escaping (String?) -> Void) -> KilobotRequest? {
+        guard #available(iOS 17, *), (1...65535).contains(socksPort) else {
+            completion(nil)
+            return nil
         }
-        completion(nil)
+        let task = Task { @MainActor in
+            guard !Task.isCancelled else { return }
+            let book = try? await RobloPublicBook.fetch(.kilobot, torPort: socksPort)
+            guard !Task.isCancelled else { return }
+            completion(book?.offerSummary)
+        }
+        return KilobotRequestHandle(task)
     }
 
     func kilobotFixtureOffers() -> String? {
