@@ -56,6 +56,10 @@ capture_failure_diagnostics() {
   local pid
   pid=$(awk -F': ' 'NF == 2 { print $2 }' "screenshots-logs/$name.launch" | tail -1)
   if [[ "$pid" =~ ^[0-9]+$ ]]; then
+    # A simulator process can exit before sample attaches. Keep only the
+    # exit classification for this launch, never a raw IPS or its backtrace.
+    python3 scripts/capture-simulator-exit.py "$BUNDLE" "$pid" "$UDID" "$launch_epoch" \
+      >"screenshots-logs/$name.$phase.exit.json" || true
     sample "$pid" 5 -file "screenshots-logs/$name.$phase.sample.txt" || true
   fi
   xcrun simctl spawn "$UDID" log show --last 3m --style compact     --predicate 'process == "Kilowallet"' >"screenshots-logs/$name.$phase.system.log" 2>&1 || true
@@ -77,6 +81,7 @@ for screen in welcome history create restore watch home simple lightning ln-star
   # teardown can race the following launch. Keep each app's own stdout/stderr.
   log="$PWD/screenshots-logs/$name.log"
   capture_launched=1
+  launch_epoch=$(date +%s)
   SIMCTL_CHILD_KW_DEMO="$screen" xcrun simctl launch --terminate-running-process \
     --stdout="$log" --stderr="$PWD/screenshots-logs/$name.stderr" "$UDID" "$BUNDLE" | tee "screenshots-logs/$name.launch"
   # Hosted Intel simulators can be slow before SwiftUI is constructed. Keep this
