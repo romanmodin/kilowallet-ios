@@ -53,6 +53,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.text.font.FontFamily
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -74,6 +75,7 @@ fun SettingsScreen(model: WalletModel, state: UiState, platform: AppPlatform) {
         Text("Settings · ${state.walletName}", style = MaterialTheme.typography.titleLarge, color = TextMain)
 
         SecondaryButton("Manage wallets", Modifier.fillMaxWidth(), color = TextMain) { model.go(Screen.Wallets) }
+        if (platform.canBrowseKilobot) KilobotOffers(platform)
         // The app's language: the phone's by default, or one fixed here (each named in its own
         // language), as in the Android app's settings.
         Panel {
@@ -342,5 +344,37 @@ private fun SettingRow(title: String, explain: String, control: @Composable () -
             Explain(explain)
         }
         control()
+    }
+}
+
+/** Public data only. The screen owns the request state; no order is stored with a wallet. */
+@Composable
+private fun KilobotOffers(platform: AppPlatform) {
+    val fixture = platform.demoScreen == "roblo-browse"
+    var request by remember(platform) { mutableStateOf(if (fixture) 1 else 0) }
+    var loading by remember(platform) { mutableStateOf(fixture) }
+    var message by remember(platform) { mutableStateOf<String?>(null) }
+    LaunchedEffect(platform, request) {
+        if (request == 0) return@LaunchedEffect
+        try {
+            message = platform.readKilobotOffers() ?: "Kilobot could not be reached or its reply could not be read."
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            message = "Could not load public offers."
+        } finally {
+            loading = false
+        }
+        if (fixture) platform.markReady("roblo-browse")
+    }
+    Panel {
+        Text("RoboSats offers · Kilobot", style = MaterialTheme.typography.bodyMedium, color = TextMain)
+        Explain("Browse public offers over Tor. Trading is unavailable in this preview.")
+        SecondaryButton(if (request == 0) "Load public offers" else "Refresh offers", enabled = !loading) {
+            loading = true
+            message = null
+            request++
+        }
+        if (loading) Explain("Loading offers…") else message?.let { Explain(it, color = TextMain) }
     }
 }

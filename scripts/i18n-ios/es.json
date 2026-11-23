@@ -794,5 +794,13 @@
   "The saved JoinBlaket commitment history could not be read or saved. Nothing was signed or sent.": "No se pudo leer o guardar el historial de compromisos de JoinBlaket. No se ha firmado ni enviado nada.",
   "added": "añadido",
   "testing…": "probando…",
-  "Could not save RPC settings.": "No se pudo guardar la configuración RPC."
+  "Could not save RPC settings.": "No se pudo guardar la configuración RPC.",
+  "RoboSats offers · Kilobot": "Ofertas de RoboSats · Kilobot",
+  "Browse public offers over Tor. Trading is unavailable in this preview.": "Consulta las ofertas públicas a través de Tor. Esta vista previa no permite operar.",
+  "Could not load public offers.": "No se pudieron cargar las ofertas públicas.",
+  "Kilobot could not be reached or its reply could not be read.": "No se pudo contactar con Kilobot o leer su respuesta.",
+  "Load public offers": "Cargar ofertas públicas",
+  "Loading offers…": "Cargando ofertas…",
+  "Refresh offers": "Actualizar ofertas",
+  "No public offers found.": "No se encontraron ofertas públicas."
 }

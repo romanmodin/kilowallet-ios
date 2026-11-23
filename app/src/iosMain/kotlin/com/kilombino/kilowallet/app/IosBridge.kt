@@ -8,6 +8,9 @@ import platform.Foundation.NSData
  * Network.framework TLS socket, CoreImage QR codes and an AVFoundation QR scanner.
  */
 interface IosBridge {
+    fun kilobotBrowseAvailable(): Boolean
+    fun kilobotOffers(socksPort: Int, completion: (String?) -> Unit)
+    fun kilobotFixtureOffers(): String?
     /** Store the secret in the Keychain behind user presence; returns an error message or null. */
     fun keychainSave(walletId: String, secret: String): String?
     /** Face ID / Touch ID / passcode, then the secret (or null and an error message). Called back on the main thread. */
