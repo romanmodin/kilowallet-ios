@@ -37,6 +37,14 @@
 	<false/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>kiloblo3ibbey3wridofauizwb467y5osfaycxoecgsf66mggsrw6ryd.onion</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>

@@ -11,6 +11,8 @@ import com.kilombino.kilowallet.core.kilojoin.WebSocket
 import com.kilombino.kilowallet.core.kilojoin.WebSocketFactory
 import com.kilombino.kilowallet.core.kilojoin.WebSocketListener
 import com.kilombino.kilowallet.core.tor.Tor
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.runBlocking
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSOperationQueue
@@ -23,6 +25,19 @@ import platform.Foundation.NSUserDefaults
 import platform.posix.memcpy
 
 class IosPlatform(private val bridge: IosBridge, override val demoScreen: String?) : AppPlatform {
+
+    override val canBrowseKilobot: Boolean
+        get() = bridge.kilobotBrowseAvailable() && (demoScreen == null || demoScreen == "roblo-browse")
+
+    override suspend fun readKilobotOffers(): String? {
+        if (!canBrowseKilobot) return null
+        if (demoScreen != null) return bridge.kilobotFixtureOffers()
+        val port = Tor.startAndWait(120_000) ?: return null
+        if (port !in 1..65535) return null
+        return suspendCancellableCoroutine { continuation ->
+            bridge.kilobotOffers(port) { summary -> continuation.resume(summary) }
+        }
+    }
 
     override val seeds: SeedStore = if (demoScreen != null) MemorySeedStore() else object : SeedStore {
         override fun hasSeed(walletId: String) = when (bridge.keychainStatus(walletId)) {

@@ -234,6 +234,7 @@ class I18nTest {
         "Kilowallet", "Face ID", "Touch ID", "sats", " sats", "zpub / ypub / xpub", "QR code of the address",
         "github.com/Kilombino/kilowallet-ios", "kilombino.com", "welcome", "create", "restore", "watch", "home", "review",
         "word word …\npassphrase",
+        "roblo-browse", // Internal simulator case, never shown on screen.
         // Currency codes, a preference key and the RBF screenshot's name.
         "USD", "EUR", "fiat", "replace",
         // "Legacy" is the same word in every table but Chinese.

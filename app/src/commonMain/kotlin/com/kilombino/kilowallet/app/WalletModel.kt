@@ -1658,7 +1658,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
         // A clean activation-date recovery can outlast ten minutes over Tor.
         // Run 41792640577 finished recovery two minutes after that old deadline.
         // Keep actual tower/peer/backup success required, within the runner's
-        // 2600-second readiness budget; this changes only the CI demo wait.
+        // bounded simulator readiness budget; this changes only the CI demo wait.
         withTimeoutOrNull(1_200_000) {
             while (runCatching { ln.towers() }.getOrDefault(emptyList()).isEmpty()) {
                 println("KW ln-live: waiting for native server/tower; info: " +
@@ -1759,6 +1759,7 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                     "home" -> scan()
                     "immature" -> scan()
                     "receive", "request" -> { go(Screen.Receive); platform.markReady(screen) }
+                    "roblo-browse" -> go(Screen.Settings) // The fixture signals after reading the snapshot.
                     "settings" -> { go(Screen.Settings); platform.markReady(screen) }
                     "lightning" -> { selectTab(Tab.LIGHTNING); platform.markReady(screen) }
                     "ln-bridge" -> {
@@ -1785,14 +1786,15 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
                         launch {
                             // A transient startup failure can precede the poller's recovery.
                             // Do not mark the native demo ready before its engine checks run.
-                            // One deadline covers initial sync plus all tower/onion checks;
-                            // missing results still fail the independent runtime verifier.
-                            // Run42014957376 spent 28m44s reaching the full server after
-                            // cold header sync and activation-date recovery. Keep a bounded
-                            // 40-minute probe so the real onion/tower/SCB checks can finish.
-                            // No real wallet birthday, trust rule or success gate changes.
-                            val completed = withTimeoutOrNull(2_400_000) {
+                            // CI only: run 45088859818 spent over 40 minutes fetching
+                            // filter headers before wallet recovery even started. Give the
+                            // cold start and the end-to-end RPC checks separate deadlines.
+                            val running = withTimeoutOrNull(3_600_000) {
                                 lightning.status.first { it is LightningModel.Status.Running }
+                                true
+                            } == true
+                            println("KW ln-live: reached running before startup deadline: $running")
+                            val completed = running && withTimeoutOrNull(1_800_000) {
                                 lightningOverTorCheck()
                                 true
                             } == true

@@ -560,5 +560,13 @@
   "no connection through Tor on this platform": "此平台上无法通过 Tor 连接",
   "added": "已添加",
   "testing…": "正在测试…",
-  "Could not save RPC settings.": "无法保存 RPC 设置。"
+  "Could not save RPC settings.": "无法保存 RPC 设置。",
+  "RoboSats offers · Kilobot": "RoboSats 报价 · Kilobot",
+  "Browse public offers over Tor. Trading is unavailable in this preview.": "通过 Tor 浏览公开报价。此预览不支持交易。",
+  "Could not load public offers.": "无法加载公开报价。",
+  "Kilobot could not be reached or its reply could not be read.": "无法连接 Kilobot 或读取其回复。",
+  "Load public offers": "加载公开报价",
+  "Loading offers…": "正在加载报价…",
+  "Refresh offers": "刷新报价",
+  "No public offers found.": "未找到公开报价。"
 }

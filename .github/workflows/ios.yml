@@ -24,6 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify native read-only Kilobot offer handling
+        run: |
+          swiftc -D ROBLO_BOOK_TESTS iosApp/iosApp/RobloPublicBook.swift scripts/roblo-simulator/BookChecks.swift -o "$RUNNER_TEMP/check-kilobot"
+          "$RUNNER_TEMP/check-kilobot" scripts/roblo-simulator/book-fixture.json
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
