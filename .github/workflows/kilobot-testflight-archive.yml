@@ -1,0 +1,77 @@
+name: Archive Kilobot QA for internal TestFlight
+
+on:
+  push:
+    branches: [qa/kilobot-testflight-archive]
+    paths: [.github/workflows/kilobot-testflight-archive.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  archive:
+    runs-on: macos-15-intel
+    timeout-minutes: 150
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45469611452
+          name: Kilobot-iPhone-test-project
+
+      - name: Verify the exact QA project
+        run: |
+          set -euo pipefail
+          echo '73f181c7197ef1225024a64749c5b06ea819aad28f6fd881ec5d9a8989866d03  Kilobot-iPhone-Test.zip' | shasum -a 256 -c -
+          unzip -q Kilobot-iPhone-Test.zip
+          test -x Kilobot-iPhone-Test/gradlew
+          selected=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' ! -iname '*beta*' | sort -V | tail -1)
+          test -n "$selected"
+          sudo xcode-select --switch "$selected/Contents/Developer"
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          test "${sdk%%.*}" -ge 26
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Archive the Release app for iPhone
+        working-directory: Kilobot-iPhone-Test
+        run: |
+          set -euo pipefail
+          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/KilobotQA.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive \
+            > "$RUNNER_TEMP/qa-archive.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/qa-archive.log"; exit 1; }
+
+      - name: Verify and retain the unsigned device archive
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/KilobotQA.xcarchive"
+          app="$archive/Products/Applications/Kilowallet.app"
+          plist="$app/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = dev.kilowallet.tests.KilobotWallet
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$plist")" = "Kilobot QA"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = 1.0.0
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" = 5
+          xcrun lipo "$app/Kilowallet" -verify_arch arm64
+          xcrun vtool -show-build "$app/Kilowallet" | grep -Eq '^ *platform IOS *$'
+          test ! -e "$app/embedded.mobileprovision"
+          mkdir out
+          ditto -c -k --keepParent "$archive" out/KilobotQA.xcarchive.zip
+          unzip -tq out/KilobotQA.xcarchive.zip
+          (cd out && shasum -a 256 KilobotQA.xcarchive.zip > SHA256SUMS)
+          cat out/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kilobot-QA-unsigned-device-archive
+          path: out/
+          if-no-files-found: error
+          compression-level: 0
