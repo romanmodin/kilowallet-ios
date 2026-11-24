@@ -1,0 +1,118 @@
+name: Kilobot iPhone test project
+
+on:
+  push:
+    branches: [qa/kilobot-iphone-project]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      CANDIDATE: 1c4e029b38dab8aa791c267663f9001b3f60e917
+      PROJECT: Kilobot-iPhone-Test
+      QA_BUNDLE: dev.kilowallet.tests.KilobotWallet
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Export the tested wallet source
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$CANDIDATE"
+          test "$(git rev-parse FETCH_HEAD)" = "$CANDIDATE"
+          mkdir "$PROJECT"
+          git archive "$CANDIDATE" | tar -x -C "$PROJECT"
+          cp docs/KILOBOT-IPHONE-TEST.md "$PROJECT/START-HERE.md"
+
+      - name: Configure the separate test app
+        working-directory: Kilobot-iPhone-Test
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import plistlib
+          from xml.etree import ElementTree
+          config = Path("iosApp/Configuration/Config.xcconfig")
+          original = config.read_text()
+          old = "BUNDLE_ID=com.kilombino.kilowallet"
+          assert original.splitlines().count(old) == 1
+          config.write_text(original.replace(old, "BUNDLE_ID=" + os.environ["QA_BUNDLE"]))
+          plist = Path("iosApp/iosApp/Info.plist")
+          info = plistlib.loads(plist.read_bytes())
+          assert info["CFBundleDisplayName"] == "Kilowallet"
+          info["CFBundleDisplayName"] = "Kilobot QA"
+          plist.write_bytes(plistlib.dumps(info, sort_keys=False))
+          scheme = Path("iosApp/iosApp.xcodeproj/xcshareddata/xcschemes/iosApp.xcscheme")
+          xml = ElementTree.parse(scheme)
+          launch = xml.find("LaunchAction")
+          assert launch is not None and launch.get("buildConfiguration") == "Debug"
+          launch.set("buildConfiguration", "Release")
+          xml.write(scheme, encoding="utf-8", xml_declaration=True)
+          PY
+
+      - name: Fetch and verify the candidate's three native engines
+        working-directory: Kilobot-iPhone-Test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for engine in lnd ark tor; do ./scripts/fetch-engine.sh "$engine"; done
+          # Only extracted frameworks are needed to run the project.
+          rm -r build/lnd-fetch build/ark-fetch build/tor-fetch
+
+      - name: Verify the iPhone Run configuration with Xcode
+        working-directory: Kilobot-iPhone-Test
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          test "${sdk%%.*}" -ge 26
+          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -showBuildSettings -json > "$RUNNER_TEMP/settings.json"
+          python3 - <<'PY'
+          import json, os, plistlib
+          from pathlib import Path
+          from xml.etree import ElementTree
+          root = Path.cwd()
+          entries = json.loads((Path(os.environ["RUNNER_TEMP"]) / "settings.json").read_text())
+          settings, = (entry["buildSettings"] for entry in entries if entry["target"] == "iosApp")
+          assert settings["PRODUCT_BUNDLE_IDENTIFIER"] == os.environ["QA_BUNDLE"]
+          assert settings["PLATFORM_NAME"] == "iphoneos" and settings["CONFIGURATION"] == "Release"
+          assert settings["CODE_SIGN_STYLE"] == "Automatic"
+          info = plistlib.loads((Path(settings["SRCROOT"]) / settings["INFOPLIST_FILE"]).read_bytes())
+          assert info["CFBundleDisplayName"] == "Kilobot QA"
+          scheme = root / "iosApp/iosApp.xcodeproj/xcshareddata/xcschemes/iosApp.xcscheme"
+          assert ElementTree.parse(scheme).find("LaunchAction").get("buildConfiguration") == "Release"
+          for name in ["Lndmobile", "KilombinoArk", "KilombinoTor"]:
+              manifest = root / "iosApp/Frameworks" / (name + ".xcframework") / "Info.plist"
+              slices = plistlib.loads(manifest.read_bytes())["AvailableLibraries"]
+              assert any(s["SupportedPlatform"] == "ios" and not s.get("SupportedPlatformVariant")
+                         and "arm64" in s["SupportedArchitectures"]
+                         and (manifest.parent / s["LibraryIdentifier"] / s["LibraryPath"]).exists()
+                         for s in slices), name
+          print(settings["PRODUCT_BUNDLE_IDENTIFIER"], settings["CONFIGURATION"], "iphoneos; three device libraries")
+          PY
+
+      - name: Package the project with executable permissions
+        run: |
+          set -euo pipefail
+          mkdir out
+          ditto -c -k --keepParent "$PROJECT" "out/$PROJECT.zip"
+          unzip -tq "out/$PROJECT.zip"
+          (cd out && shasum -a 256 "$PROJECT.zip" > SHA256SUMS)
+          cat out/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kilobot-iPhone-test-project
+          path: out/
+          if-no-files-found: error
+          compression-level: 0
