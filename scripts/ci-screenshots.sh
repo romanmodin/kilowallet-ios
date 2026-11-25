@@ -174,8 +174,15 @@ for screen in welcome history create restore watch home simple lightning ln-star
       if "$CHECKER" "${check_args[@]}" && { [ "$screen" != roblo-browse ] || {
         "$CHECKER" "$SHOT" "96 EUR" && "$CHECKER" "$SHOT" "Kilobot"
       }; }; then rendered=true; break; fi
-      sleep 3
-      xcrun simctl io "$UDID" screenshot "$SHOT"
+      # Preserve the rejected restore frame before another capture overwrites it.
+      if [ "$screen" = restore ]; then
+        cp "$SHOT" "$OUT/restore-attempt-$attempt.png"
+      fi
+      # Every candidate frame retained as SHOT must have actually been checked.
+      if [ "$attempt" -lt 3 ]; then
+        sleep 3
+        xcrun simctl io "$UDID" screenshot "$SHOT"
+      fi
     done
     if [ "$rendered" != true ]; then
       echo "$screen: rendered screen did not match readiness marker"
