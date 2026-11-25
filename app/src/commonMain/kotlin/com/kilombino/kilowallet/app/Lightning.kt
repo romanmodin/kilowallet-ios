@@ -379,6 +379,8 @@ class LightningModel(private val platform: AppPlatform) {
         // Tower registration is independent of the optional channel peer. SERVER_ACTIVE
         // avoids LND's startup lock without waiting for that peer to be reachable.
         if (torOn && !towerAdded) addTowerOnce()
+        // The isolated probe owns this dial and verifies the exact peer via ListPeers.
+        if (platform.demoScreen == "ln-live") return
         if (peers > 0) { linked = true; return }
         val now = Lnd.host.nowSeconds()
         if (now - lastLink < 30) return

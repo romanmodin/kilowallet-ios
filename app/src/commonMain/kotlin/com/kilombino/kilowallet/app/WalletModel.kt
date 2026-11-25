@@ -1680,9 +1680,9 @@ class WalletModel(private val platform: AppPlatform, private val cryptoDispatche
             delay(5_000)
             val result = withTimeoutOrNull(90_000) {
                 val connected = runCatching { ln.connect(k.NODE, k.ONION) }
-                val addresses = runCatching { ln.peerAddresses() }.getOrDefault(emptyMap())
-                peers = addresses.toString()
-                connected.isSuccess && addresses[k.NODE] == k.ONION
+                connected.isSuccess && awaitDemoOnionPeer(k.NODE, k.ONION) {
+                    ln.peerAddresses().also { peers = it.toString() }
+                }
             } ?: false
             if (result) { how = "OK"; break }
             println("KW ln-live: onion attempt $attempt not verified; peers $peers")
