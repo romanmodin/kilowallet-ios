@@ -1,4 +1,4 @@
-name: Archive Kilobot QA for internal TestFlight
+name: Archive Kilobot QA for TestFlight
 
 on:
   push:
@@ -47,7 +47,7 @@ jobs:
           xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/KilobotQA.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive \
+            CURRENT_PROJECT_VERSION=6 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive \
             > "$RUNNER_TEMP/qa-archive.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/qa-archive.log"; exit 1; }
 
       - name: Verify and retain the unsigned device archive
@@ -59,7 +59,8 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = dev.kilowallet.tests.KilobotWallet
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$plist")" = "Kilobot QA"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = 1.0.0
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" = 5
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" = 6
+          test "$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleVersion' "$archive/Info.plist")" = 6
           xcrun lipo "$app/Kilowallet" -verify_arch arm64
           xcrun vtool -show-build "$app/Kilowallet" | grep -Eq '^ *platform IOS *$'
           test ! -e "$app/embedded.mobileprovision"
